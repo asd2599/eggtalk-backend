@@ -16,6 +16,10 @@ const io = new Server(server, {
 app.use(cors());
 app.use(express.json());
 
+// Swagger 설정 연결
+const { swaggerUi, swaggerSpec } = require("./swagger");
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
 // --- Socket.io 실시간 이벤트 로직 --- //
 io.on("connection", (socket) => {
   // 새 사용자가 연결될 때마다 전체 접속자 수 브로드캐스트
