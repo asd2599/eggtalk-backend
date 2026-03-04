@@ -37,3 +37,14 @@ CREATE TABLE pets (
     today_chat_count INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 데이팅(실시간 1:1 채팅) 룸 테이블 생성
+DROP TABLE IF EXISTS dating_rooms CASCADE;
+CREATE TABLE dating_rooms (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(100) NOT NULL,
+    creator_pet_name VARCHAR(50) NOT NULL,
+    participant_pet_name VARCHAR(50),
+    status VARCHAR(20) DEFAULT 'waiting' CHECK (status IN ('waiting', 'active', 'closed')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
