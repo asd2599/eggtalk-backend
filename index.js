@@ -14,12 +14,39 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "*", // 호환성을 위해 모든 출처 허용
-    methods: ["GET", "POST"],
+    // Vercel 프론트엔드 도메인과 이전 배포 도메인, 로컬 테스트(Vite/React 기본 포트) 모두 허용
+    origin: [
+      "https://gamestack.store",
+      "https://www.gamestack.store",
+      "https://keepinsight.site",
+      "https://www.keepinsight.site",
+      "http://localhost:3000",
+      "http://localhost:5173",
+      "http://localhost:5174",
+      "http://localhost:5175",
+    ],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    credentials: true, // 인증 정보(쿠키/토큰 헤더) 허용
   },
+  allowEIO3: true, // 하위 호환성 (선택사항)
 });
 
-app.use(cors());
+// 일반 Express API용 CORS 설정
+app.use(
+  cors({
+    origin: [
+      "https://gamestack.store",
+      "https://www.gamestack.store",
+      "https://keepinsight.site",
+      "https://www.keepinsight.site",
+      "http://localhost:3000",
+      "http://localhost:5173",
+      "http://localhost:5174",
+      "http://localhost:5175",
+    ],
+    credentials: true,
+  }),
+);
 app.use(express.json());
 
 // Swagger 설정 연결

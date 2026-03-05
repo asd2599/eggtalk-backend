@@ -3,6 +3,14 @@ const { pool } = require("../database/database");
 // 전체 활성화/대기 중인 방 목록 조회 (Lounge)
 exports.getRooms = async (req, res) => {
   try {
+    // 1. 30분(30 minutes) 이상 대기 상태(waiting)인 유령 방 일괄 삭제 (자동 청소 로직)
+    await pool.query(`
+      DELETE FROM dating_rooms 
+      WHERE status = 'waiting' 
+      AND created_at < NOW() - INTERVAL '30 minutes'
+    `);
+
+    // 2. 남은 방 목록 조회
     const query = `
       SELECT id, name, creator_pet_name, participant_pet_name, status, created_at
       FROM dating_rooms
