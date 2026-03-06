@@ -3,11 +3,11 @@ const { pool } = require("../database/database");
 // 전체 활성화/대기 중인 방 목록 조회 (Lounge)
 exports.getRooms = async (req, res) => {
   try {
-    // 1. 30분(30 minutes) 이상 대기 상태(waiting)인 유령 방 일괄 삭제 (자동 청소 로직)
+    // 1. 오래된 유령 방(대기상태 30분 이상) 및 상태 무관하게 3시간 이상 경과된 방 자동 청소
     await pool.query(`
       DELETE FROM dating_rooms 
-      WHERE status = 'waiting' 
-      AND created_at < NOW() - INTERVAL '30 minutes'
+      WHERE (status = 'waiting' AND created_at < NOW() - INTERVAL '30 minutes')
+         OR (created_at < NOW() - INTERVAL '3 hours')
     `);
 
     // 2. 남은 방 목록 조회
@@ -147,9 +147,21 @@ exports.getRoomInfo = async (req, res) => {
     }
 
     const row = result.rows[0];
-    const users = [{ id: null, petName: row.creator_pet_name }];
-    if (row.participant_pet_name) {
-      users.push({ id: null, petName: row.participant_pet_name });
+
+    // (변경) 각 참여자의 상세 펫 정보를 함께 불러오기 위한 쿼리
+    let users = [];
+    if (row.creator_pet_name || row.participant_pet_name) {
+      const petNames = [row.creator_pet_name, row.participant_pet_name].filter(
+        Boolean,
+      );
+      const petQuery = `SELECT * FROM pets WHERE name = ANY($1)`;
+      const petResult = await pool.query(petQuery, [petNames]);
+
+      users = petResult.rows.map((petRow) => ({
+        id: null,
+        petName: petRow.name,
+        petData: petRow, // 프론트의 new Pet() 생성자에 통째로 넣을 원본 데이터
+      }));
     }
 
     res.json({
