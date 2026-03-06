@@ -169,4 +169,24 @@ router.post(
   petController.analyzeTendency,
 );
 
+/**
+ * @swagger
+ * /api/pets/gift:
+ *   post:
+ *     summary: "상대방 펫에게 선물하기"
+ *     description: "지정된 다른 펫에게 선물을 주어 능력치를 변화시킵니다."
+ *     tags: [Pets]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: "성공적으로 선물을 전송함"
+ *       400:
+ *         description: "잘못된 요청 매개변수"
+ *       404:
+ *         description: "대상 펫을 찾을 수 없음"
+ */
+// 펫에게 선물 보내기
+router.post("/api/pets/gift", authenticateToken, petController.giftToPet);
+
 module.exports = router;
