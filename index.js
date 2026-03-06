@@ -93,6 +93,9 @@ io.on("connection", (socket) => {
     // 💡 React StrictMode 등 이중 조인 요청에 의한 다중 시스템 메시지 도배 방지
     if (!socket.rooms.has(roomId)) {
       socket.join(roomId);
+      // 비정상 종료(창 닫기 등) 대응을 위해 소켓 객체에 정보 저장
+      socket.roomId = roomId;
+      socket.petName = petName;
 
       // 이 방에 있는 사람들에게만(나 제외) 새로 입장했음을 알림
       socket.to(roomId).emit("receive_dating_message", {
@@ -143,8 +146,59 @@ io.on("connection", (socket) => {
   });
 
   // 순수 소켓 접속 종료 (창 닫힘 등)
-  socket.on("disconnect", () => {
-    // 💡 접속 종료 시 Map에서 해당 세션 정보 제거
+  socket.on("disconnect", async () => {
+    // 💡 1. 채팅방 비정상 종료 대응 (DB 퇴장 처리)
+    const { roomId, petName: roomPetName } = socket;
+    if (roomId && roomPetName) {
+      try {
+        const { pool } = require("./database/database");
+        const checkResult = await pool.query(
+          "SELECT * FROM dating_rooms WHERE id = $1",
+          [roomId],
+        );
+
+        if (checkResult.rows.length > 0) {
+          const room = checkResult.rows[0];
+          let updateQuery = "";
+          let shouldUpdate = false;
+
+          if (room.creator_pet_name === roomPetName) {
+            if (room.participant_pet_name) {
+              updateQuery =
+                "UPDATE dating_rooms SET creator_pet_name = $1, participant_pet_name = NULL, status = 'waiting' WHERE id = $2";
+              await pool.query(updateQuery, [
+                room.participant_pet_name,
+                roomId,
+              ]);
+              shouldUpdate = true;
+            } else {
+              await pool.query("DELETE FROM dating_rooms WHERE id = $1", [
+                roomId,
+              ]);
+              shouldUpdate = true;
+            }
+          } else if (room.participant_pet_name === roomPetName) {
+            updateQuery =
+              "UPDATE dating_rooms SET participant_pet_name = NULL, status = 'waiting' WHERE id = $1";
+            await pool.query(updateQuery, [roomId]);
+            shouldUpdate = true;
+          }
+
+          if (shouldUpdate) {
+            socket.to(roomId).emit("receive_dating_message", {
+              sender: "System",
+              message: `${roomPetName}님이 연결이 끊겨 퇴장했습니다.`,
+              isSystem: true,
+            });
+            io.emit("rooms_updated");
+          }
+        }
+      } catch (err) {
+        console.error("Disconnect room cleanup error:", err);
+      }
+    }
+
+    // 💡 2. 접속 종료 시 Map에서 해당 세션 정보 제거
     const petName = socketToPetName.get(socket.id);
     if (petName) {
       const sockets = activeUsers.get(petName);
