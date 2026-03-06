@@ -107,13 +107,16 @@ io.on("connection", (socket) => {
   });
 
   // 방에서 실시간 메시지 교환
-  socket.on("send_dating_message", ({ roomId, message, sender }) => {
-    // 같은 방 안에 있는 사용자들에게 메시지 브로드캐스트 (본인 제외)
-    socket.to(roomId).emit("receive_dating_message", {
-      sender,
-      message,
-      timestamp: new Date(),
-    });
+  socket.on("send_dating_message", (data) => {
+    // data가 객체일 때만 동작하도록 안전장치 추가
+    if (data && typeof data === "object") {
+      const { roomId, ...msgData } = data;
+      // 같은 방 안에 있는 사용자들에게 메시지 브로드캐스트 (본인 제외)
+      socket.to(roomId).emit("receive_dating_message", {
+        ...msgData,
+        timestamp: msgData.timestamp || new Date(),
+      });
+    }
   });
 
   // 실시간 친구 요청 전송 알림

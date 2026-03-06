@@ -647,9 +647,28 @@ const giftToPet = async (req, res) => {
 
     // 스탯 업데이트 적용
     for (const [key, value] of Object.entries(stats)) {
-      // pets 테이블에 존재하는 컬럼인지 간이 체크 후 적용
-      if (pet.hasOwnProperty(key)) {
-        pet[key] = clamp(Number(pet[key]) + Number(value));
+      // pets 테이블에 존재하는 컬럼인지 간이 체크 후 적용 (유효한 컬럼들)
+      const validStats = [
+        "health_hp",
+        "hunger",
+        "cleanliness",
+        "stress",
+        "affection",
+        "altruism",
+        "empathy",
+        "knowledge",
+        "logic",
+        "extroversion",
+        "humor",
+        "openness",
+        "directness",
+        "curiosity",
+      ];
+
+      const statsKey = key.toLowerCase();
+      // 프론트엔드에서 넘어온 항목이 유효한 스탯 컬럼이면 기존 값에 더한 뒤 최대 100 제한
+      if (validStats.includes(statsKey) && pet.hasOwnProperty(statsKey)) {
+        pet[statsKey] = clamp(Number(pet[statsKey]) + Number(value), 0, 100);
       }
     }
 
@@ -744,6 +763,75 @@ const giftToPet = async (req, res) => {
   }
 };
 
+// 10초 침묵 시 펫이 자동으로 대화 유도 (최근 대화 10개 참조)
+const getAutoComment = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { lastMessages } = req.body;
+
+    // 1. 유저 펫 정보 로드
+    const petQuery = "SELECT * FROM pets WHERE user_id = $1";
+    const petResult = await pool.query(petQuery, [userId]);
+
+    if (petResult.rows.length === 0) {
+      return res.status(404).json({ message: "펫을 먼저 생성해주세요." });
+    }
+    const pet = petResult.rows[0];
+
+    // 2. OpenAI API 호출
+    let reply = "";
+    if (
+      !process.env.OPENAI_API_KEY ||
+      process.env.OPENAI_API_KEY === "your_openai_api_key_here"
+    ) {
+      reply = `${pet.name} : 주인이 말이 없네.. 심심하다 멍! (테스트 모드)`;
+    } else {
+      // 최근 대화 내역을 텍스트로 정리
+      const contextText =
+        lastMessages && Array.isArray(lastMessages)
+          ? lastMessages
+              .map((m) => `${m.sender}: ${m.message || m.text}`)
+              .join("\n")
+          : "대화 내역 없음";
+
+      const systemPrompt = `
+        너는 유저의 인공지능 반려동물 '${pet.name}'이야. 성향은 '${pet.tendency}'야.
+        현재 1:1 라이브 채팅방에서 대화가 10초 동안 끊겨서 어색한 상황이야.
+        
+        [최근 대화 내역]
+        ${contextText}
+
+        위 대화 내역(Context)을 참고해서, 흐름을 자연스럽게 이어가거나 새로운 대화 주제를 던져서 침묵을 깨는 짧은 한마디(1~2문장)를 해줘.
+        절대 길게 말하지 말고, 펫의 성향에 맞는 귀여운 말투(멍, 냥 등)와 이모지를 포함해.
+      `;
+
+      try {
+        const completion = await openai.chat.completions.create({
+          model: "gpt-3.5-turbo",
+          messages: [{ role: "system", content: systemPrompt }],
+          max_tokens: 150,
+          temperature: 0.8,
+        });
+        reply = completion.choices[0].message.content;
+      } catch (err) {
+        console.error("AI 자동 멘트 생성 에러:", err);
+        reply = "멍! 다들 어디갔어? 나랑 놀자! 🐾";
+      }
+    }
+
+    return res.status(200).json({
+      reply,
+      petName: pet.name,
+      message: "자동 멘트 생성 성공",
+    });
+  } catch (error) {
+    console.error("getAutoComment error:", error);
+    return res
+      .status(500)
+      .json({ message: "자동 멘트 생성 중 오류가 발생했습니다." });
+  }
+};
+
 module.exports = {
   getMyPet,
   createPet,
@@ -752,4 +840,5 @@ module.exports = {
   chatWithPet,
   analyzeTendency,
   giftToPet,
+  getAutoComment,
 };

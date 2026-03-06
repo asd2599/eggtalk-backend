@@ -189,4 +189,38 @@ router.post(
 // 펫에게 선물 보내기
 router.post("/api/pets/gift", authenticateToken, petController.giftToPet);
 
+/**
+ * @swagger
+ * /api/pets/auto-comment:
+ *   post:
+ *     summary: "펫 자동 대화 (침묵 깨기)"
+ *     description: "최근 대화 내역을 바탕으로 펫이 자동으로 대화를 유도하는 멘트를 생성합니다."
+ *     tags: [Pets]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               lastMessages:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                 description: 최근 대화 내역 (최대 10개)
+ *     responses:
+ *       200:
+ *         description: "성공적으로 멘트를 생성함"
+ *       401:
+ *         description: "인증 실패"
+ */
+// 펫 자동 대화 멘트 생성
+router.post(
+  "/api/pets/auto-comment",
+  authenticateToken,
+  petController.getAutoComment,
+);
+
 module.exports = router;
