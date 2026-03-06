@@ -621,6 +621,129 @@ const analyzeTendency = async (req, res) => {
   }
 };
 
+// 상대방 펫 선물하기
+const giftToPet = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { targetPetName, giftName, stats, message } = req.body;
+
+    if (!targetPetName || !stats) {
+      return res
+        .status(400)
+        .json({ message: "대상 펫 이름과 선물 스탯 정보가 필요합니다." });
+    }
+
+    // 대상 펫 정보 조회
+    const getQuery = "SELECT * FROM pets WHERE name = $1";
+    const getResult = await pool.query(getQuery, [targetPetName]);
+
+    if (getResult.rows.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "선물 받을 펫을 찾을 수 없습니다." });
+    }
+
+    const pet = getResult.rows[0];
+
+    // 스탯 업데이트 적용
+    for (const [key, value] of Object.entries(stats)) {
+      // pets 테이블에 존재하는 컬럼인지 간이 체크 후 적용
+      if (pet.hasOwnProperty(key)) {
+        pet[key] = clamp(Number(pet[key]) + Number(value));
+      }
+    }
+
+    // 선물 수령에 따른 기본 보너스 경험치 15 고정 부여
+    pet.exp += 15;
+    const expNeeded = pet.level * 100;
+    if (pet.exp >= expNeeded) {
+      pet.level += 1;
+      pet.exp -= expNeeded;
+    }
+
+    // 업데이트 쿼리 (performAction 과 유사)
+    const updateQuery = `
+      UPDATE pets
+      SET 
+        exp = $1,
+        level = $2,
+        health_hp = $3,
+        hunger = $4,
+        cleanliness = $5,
+        stress = $6,
+        affection = $7,
+        altruism = $8,
+        empathy = $9,
+        knowledge = $10,
+        logic = $11,
+        extroversion = $12,
+        humor = $13,
+        openness = $14,
+        directness = $15,
+        curiosity = $16
+      WHERE name = $17
+      RETURNING *;
+    `;
+
+    const values = [
+      Number(pet.exp) || 0,
+      Number(pet.level) || 1,
+      Number(pet.health_hp) || 0,
+      Number(pet.hunger) || 0,
+      Number(pet.cleanliness) || 0,
+      Number(pet.stress) || 0,
+      Number(pet.affection) || 0,
+      Number(pet.altruism) || 0,
+      Number(pet.empathy) || 0,
+      Number(pet.knowledge) || 0,
+      Number(pet.logic) || 0,
+      Number(pet.extroversion) || 0,
+      Number(pet.humor) || 0,
+      Number(pet.openness) || 0,
+      Number(pet.directness) || 0,
+      Number(pet.curiosity) || 0,
+      targetPetName,
+    ];
+
+    const updateResult = await pool.query(updateQuery, values);
+
+    // AI 대답 생성 로직
+    let reply = "";
+    if (message && message.trim() !== "") {
+      const systemPrompt = `너는 이제 사용자의 소중한 인공지능 반려동물이야.
+이름은 '${pet.name}'이고, 성향은 '${pet.tendency}'야.
+
+사용자가 방금 너에게 특별한 선물 '${req.body.giftName || "선물"}'을 주면서 이렇게 말했어: "${message.trim()}"
+
+이 선물을 받은 소감과 감사 인사를 너의 성향에 맞게 귀엽게 1~2문장으로 대답해줘. 이모지도 꼭 포함해.`;
+
+      try {
+        const completion = await openai.chat.completions.create({
+          model: "gpt-3.5-turbo",
+          messages: [{ role: "system", content: systemPrompt }],
+          max_tokens: 150,
+          temperature: 0.8,
+        });
+        reply = completion.choices[0].message.content;
+      } catch (err) {
+        console.error("AI 선물 대답 파싱 에러:", err);
+        reply = "멍! 선물 고마워!! (에러로 인해 응답 실패)";
+      }
+    }
+
+    return res.status(200).json({
+      pet: updateResult.rows[0],
+      message: "선물을 성공적으로 전달했습니다!",
+      reply: reply,
+    });
+  } catch (error) {
+    console.error("giftToPet error:", error);
+    return res
+      .status(500)
+      .json({ message: "선물 처리 중 오류가 발생했습니다." });
+  }
+};
+
 module.exports = {
   getMyPet,
   createPet,
@@ -628,4 +751,5 @@ module.exports = {
   getRanking,
   chatWithPet,
   analyzeTendency,
+  giftToPet,
 };
