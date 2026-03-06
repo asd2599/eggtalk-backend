@@ -54,6 +54,12 @@ const { swaggerUi, swaggerSpec } = require("./swagger");
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 // --- Socket.io 실시간 이벤트 로직 (DB 기반 전환 후 최소화) --- //
+// 💡 전역 온라인 유저 관리 Map (V2.0 친구 상태 연동용)
+// petName -> Set(socket.id) 여러 탭 접속 허용
+const activeUsers = new Map();
+// socket.id -> petName
+const socketToPetName = new Map();
+
 io.on("connection", (socket) => {
   // 새 사용자가 연결될 때마다 로비 접속자 수 브로드캐스트
   io.emit("update_user_count", io.engine.clientsCount);
@@ -65,7 +71,21 @@ io.on("connection", (socket) => {
   });
 
   socket.on("user_login", (petName) => {
+    // 💡 Map에 현재 펫 이름 및 소켓 세션 등록
+    socketToPetName.set(socket.id, petName);
+    if (!activeUsers.has(petName)) {
+      activeUsers.set(petName, new Set());
+    }
+    activeUsers.get(petName).add(socket.id);
+
+    // 전체 접속된 펫 이름(배열)을 즉시 접속자 모두에게 브로드캐스트
+    io.emit("online_users_list", Array.from(activeUsers.keys()));
     socket.broadcast.emit("new_user_login", petName);
+  });
+
+  // 누군가 현재 접속자 목록을 요청할 때 (FriendPage 최초 진입 등)
+  socket.on("get_online_users", (callback) => {
+    if (callback) callback(Array.from(activeUsers.keys()));
   });
 
   // DB 기반 상태 환경에서 통신을 위해서 소켓 Room 에만 입장 (방 관리는 DB에서 이미 끝남)
@@ -96,6 +116,19 @@ io.on("connection", (socket) => {
     });
   });
 
+  // 실시간 친구 요청 전송 알림
+  socket.on(
+    "send_friend_request",
+    ({ roomId, requesterPetName, receiverPetName, requestId }) => {
+      // 본인을 제외한 방 안의 사람들에게 전송 (1:1 방이므로 사실상 상대방에게만 감)
+      socket.to(roomId).emit("receive_friend_request", {
+        requesterPetName,
+        receiverPetName,
+        requestId,
+      });
+    },
+  );
+
   // 방 퇴장 알림
   socket.on("leave_dating_room", ({ roomId, petName }) => {
     socket.to(roomId).emit("receive_dating_message", {
@@ -108,6 +141,22 @@ io.on("connection", (socket) => {
 
   // 순수 소켓 접속 종료 (창 닫힘 등)
   socket.on("disconnect", () => {
+    // 💡 접속 종료 시 Map에서 해당 세션 정보 제거
+    const petName = socketToPetName.get(socket.id);
+    if (petName) {
+      const sockets = activeUsers.get(petName);
+      if (sockets) {
+        sockets.delete(socket.id);
+        if (sockets.size === 0) {
+          activeUsers.delete(petName);
+        }
+      }
+      socketToPetName.delete(socket.id);
+
+      // 누군가 아예 모든 탭을 끄고 나갔으면 온라인 목록 바로 브로드캐스트 갱신
+      io.emit("online_users_list", Array.from(activeUsers.keys()));
+    }
+
     io.emit("update_user_count", io.engine.clientsCount);
   });
 });
@@ -125,6 +174,9 @@ app.use(petRoutes);
 
 const roomRoutes = require("./routes/roomRoutes");
 app.use("/api", roomRoutes);
+
+const friendRoutes = require("./routes/friendRoutes");
+app.use("/api/friends", friendRoutes);
 
 const PORT = process.env.PORT || 8000;
 server.listen(PORT, "0.0.0.0", () => {
