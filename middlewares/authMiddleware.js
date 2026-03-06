@@ -12,7 +12,11 @@ const authenticateToken = (req, res, next) => {
 
   jwt.verify(token, process.env.JWT_SECRET, (err, decodedUser) => {
     if (err) {
-      return res.status(403).json({ message: "유효하지 않은 토큰입니다." });
+      console.error("JWT Verification Error:", err.message);
+      // 토큰 만료 시와 유효하지 않은 경우를 구분해서 로그 남김
+      return res
+        .status(403)
+        .json({ message: "유효하지 않은 토큰입니다.", error: err.message });
     }
 
     // decodedUser 에는 userController 로긴시 서명된 { userId, email } 가 들어있습니다
