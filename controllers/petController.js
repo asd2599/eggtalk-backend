@@ -50,15 +50,17 @@ const createPet = async (req, res) => {
 
     const insertQuery = `
       INSERT INTO pets (
-        user_id, name, color, level, exp, hunger, cleanliness, health_hp, stress, 
+        user_id, name, color, 
+        hunger, cleanliness, health_hp, 
         knowledge, affection, altruism, logic, empathy, 
         extroversion, humor, openness, directness, curiosity,
-        tendency
+        face, shape, hand
       ) VALUES (
-        $1, $2, $3, 1, 0, 100, 100, 100, 0,
-        0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0,
-        'neutral'
+        $1, $2, $3, 
+        50, 50, 50, 
+        50, 50, 50, 50, 50, 
+        50, 50, 50, 50, 50,
+        'neutral', 'circle', 'open'
       ) RETURNING *;
     `;
 
@@ -350,10 +352,12 @@ const chatWithPet = async (req, res) => {
     } else {
       const systemPrompt = `
         너는 이제 사용자의 소중한 인공지능 반려동물이야.
-        이름은 '${pet.name}'이고, 성향은 '${pet.tendency}'야. (neutral, active, calm 등 다양해)
+        이름은 '${pet.name}'이고, 성향은 '${pet.tendency}'야.
+
+        **너의 이름(${pet.name})이 가진 느낌이나 고유한 개성을 대화 말투와 태도에 적극적으로 반영해줘.** 이름에 걸맞은 캐릭터성을 가지고 사용자와 대화해.
 
         아래 두 가지 작업을 수행하고 JSON 형식으로만 반환해:
-        1. "reply": 사용자의 메시지에 대해 짧고 귀엽게 1~2문장으로 대답. 이모지도 사용하고 '멍', '냥' 같은 말투 포함.
+        1. "reply": 사용자의 메시지에 대해 짧고 귀엽게 1~3문장으로 대답. 이모지도 사용.
         2. "analysis": **네가 할 대답이 아니라, 방금 사용자가 입력한 메시지 자체를 분석**해서 해당 메시지가 지닌 성격을 기준으로 아래 10가지 능력치 증감을 -5 ~ +5 정수로 평가해.
         {
           "reply": "여기에 대답 작성",
@@ -506,6 +510,9 @@ const analyzeTendency = async (req, res) => {
 
     // 2. OpenAI API 호출
     let newTendency = "neutral";
+    let newFace = "neutral";
+    let newHand = "open";
+    let newShape = "circle";
     let analysisReason = "기본 성향 유지중";
 
     if (
@@ -513,9 +520,13 @@ const analyzeTendency = async (req, res) => {
       process.env.OPENAI_API_KEY === "your_openai_api_key_here"
     ) {
       newTendency = "active";
-      analysisReason = "(테스트 모드) 임의의 성향으로 변경되었습니다.";
+      newFace = "excited";
+      newHand = "peace";
+      newShape = "squircle";
+      analysisReason = "(테스트 모드) 임의의 성향과 외형으로 변경되었습니다.";
     } else {
       const statsJson = JSON.stringify({
+        name: pet.name,
         level: pet.level,
         exp: pet.exp,
         hunger: pet.hunger,
@@ -538,24 +549,22 @@ const analyzeTendency = async (req, res) => {
         다음은 가상의 인공지능 펫의 종합적인 현재 능력치 및 상태(JSON 포맷) 데이터야: 
         ${statsJson}
         
-        네 목표는 이 데이터를 종합적으로 고려하여 이 펫에게 가장 어울리는 단어를 아래 10개의 **영문 소문자** 성향 중에서 단 '1개'만 선택하는 거야.
+        네 목표는 이 데이터를 종합적으로 고려하여 이 펫에게 가장 어울리는 단어를 아래 10개의 **영문 소문자** 성향 중에서 단 '1개'만 선택하고, 그 성향에 어울리는 외형(face, hand, shape)을 함께 결정하는 거야.
         
-        [선택 가능한 성향 목록]
-        neutral (중립적인, 특징이 적음)
-        active (활동적인, 스트레스가 낮고 체력이 높음)
-        calm (차분한, 지식이나 논리가 상대적으로 높음)
-        affectionate (애교 많은, 애정도가 유독 높음)
-        empathetic (공감을 잘하는, 공감이 높음)
-        smart (영리한, 지식이 매우 높음)
-        logical (논리적인, 논리 수치가 높음)
-        altruistic (이타적인, 이타성이 높음)
-        gloomy (우울한, 스트레스가 높고 애정도 등 감정이 모두 낮음)
-        hungry (식탐많은, 포만감이 비정상적으로 부족함)
+        **특히 펫의 '이름'(${pet.name})이 가지는 느낌이나 의미도 성향과 외형 결정에 적절히 반영해줘.** 이름의 뉘앙스에 따라 성격이 결정되는 인격체라고 생각하고 분석해.
 
+        [선택 가능한 외형 목록 - 반드시 이 중에서만 선택]
+        1. face (표정 12종): angry, confused, dizzy, excited, gloomy, neutral, playful, relaxed, relieved, sad, smug, tired
+        2. hand (손 모양 6종): closed, open, peace, point, rock, thumb
+        3. shape (몸체 모양 4종): circle, rhombus, square, squircle
+        
         다음 JSON 형식으로만 응답해:
         {
-          "tendency": "(위 목록 중 정확히 일치하는 단어 1개)",
-          "reason": "(이 성향을 선택한 이유를 사용자가 보기 좋게 1문장으로 한국어로 설명)"
+          "tendency": "(이름과 능력치를 종합적으로 고려하여 가장 어울리는 성향 1개를 한국어 한단어로)",
+          "face": "(위 목록 중 선택)",
+          "hand": "(위 목록 중 선택)",
+          "shape": "(위 목록 중 선택)",
+          "reason": "(이 성향과 외형을 선택한 이유를 사용자가 보기 좋게 1문장으로 한국어로 설명)"
         }
       `;
 
@@ -572,24 +581,10 @@ const analyzeTendency = async (req, res) => {
         const parsedResponse = JSON.parse(responseContent);
 
         newTendency = parsedResponse.tendency || "neutral";
+        newFace = parsedResponse.face || "neutral";
+        newHand = parsedResponse.hand || "open";
+        newShape = parsedResponse.shape || "circle";
         analysisReason = parsedResponse.reason || "능력치 기반 분석 완료";
-
-        // 유효한 성향인지 확인(10개 중 하나인지), 아니라면 기본값 처리
-        const validTendencies = [
-          "neutral",
-          "active",
-          "calm",
-          "affectionate",
-          "empathetic",
-          "smart",
-          "logical",
-          "altruistic",
-          "gloomy",
-          "hungry",
-        ];
-        if (!validTendencies.includes(newTendency)) {
-          newTendency = "neutral";
-        }
       } catch (error) {
         console.error("성향 분석 파싱 에러:", error);
         return res
@@ -598,14 +593,20 @@ const analyzeTendency = async (req, res) => {
       }
     }
 
-    // 3. 분석된 성향으로 DB 업데이트
+    // 3. 분석된 성향과 외형으로 DB 업데이트
     const updateQuery = `
       UPDATE pets
-      SET tendency = $1
-      WHERE id = $2
+      SET tendency = $1, face = $2, hand = $3, shape = $4
+      WHERE id = $5
       RETURNING *
     `;
-    const updateResult = await pool.query(updateQuery, [newTendency, pet.id]);
+    const updateResult = await pool.query(updateQuery, [
+      newTendency,
+      newFace,
+      newHand,
+      newShape,
+      pet.id,
+    ]);
     const updatedPet = updateResult.rows[0];
 
     return res.status(200).json({
