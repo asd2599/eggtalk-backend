@@ -235,6 +235,20 @@ app.use("/api", roomRoutes);
 const friendRoutes = require("./routes/friendRoutes");
 app.use("/api/friends", friendRoutes);
 
+// --- 5분마다 모든 펫의 배고픔(hunger) 1씩 감소 스케줄러 --- //
+setInterval(async () => {
+  try {
+    const { pool } = require("./database/database");
+    await pool.query(
+      "UPDATE pets SET hunger = GREATEST(0, hunger - 1) WHERE hunger > 0",
+    );
+    console.log("🕒 [Scheduler] 모든 펫의 허기 수치가 1 감소했습니다.");
+  } catch (err) {
+    console.error("🕒 [Scheduler] 허기 감소 스케줄러 작업 중 오류:", err);
+  }
+}, 300000); // 5분 = 300,000ms
+// ----------------------------------------------------- //
+
 const PORT = process.env.PORT || 8000;
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 서버(Socket 포함)가 포트 ${PORT}에서 작동 중입니다.`);

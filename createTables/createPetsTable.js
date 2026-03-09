@@ -23,6 +23,9 @@ const createTableQuery = `
         directness INTEGER DEFAULT 0,
         curiosity INTEGER DEFAULT 0,
         tendency VARCHAR(50) DEFAULT 'neutral',
+        face VARCHAR(50) DEFAULT 'neutral',
+        shape VARCHAR(50) DEFAULT 'circle',
+        hand VARCHAR(50) DEFAULT 'open',
         last_chat_time TIMESTAMP,
         today_chat_count INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -35,7 +38,10 @@ const alterTableQuery = `
     ADD COLUMN IF NOT EXISTS humor INTEGER DEFAULT 0,
     ADD COLUMN IF NOT EXISTS openness INTEGER DEFAULT 0,
     ADD COLUMN IF NOT EXISTS directness INTEGER DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS curiosity INTEGER DEFAULT 0;
+    ADD COLUMN IF NOT EXISTS curiosity INTEGER DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS face VARCHAR(50) DEFAULT 'neutral',
+    ADD COLUMN IF NOT EXISTS shape VARCHAR(50) DEFAULT 'circle',
+    ADD COLUMN IF NOT EXISTS hand VARCHAR(50) DEFAULT 'open';
 `;
 
 const createTable = async () => {
