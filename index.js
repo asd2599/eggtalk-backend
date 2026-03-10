@@ -3,6 +3,13 @@ const cors = require("cors");
 require("dotenv").config();
 const http = require("http");
 const { Server } = require("socket.io");
+const {
+  generateRolePlay,
+  scoreChat,
+  getRandomScenario,
+  findScenarioById,
+  generatePetReply,
+} = require("./services/rolePlayService");
 
 process.on("uncaughtException", (err) => {
   console.error("!!! UNCAUGHT CRASH !!!", err);
@@ -62,6 +69,18 @@ const socketToPetName = new Map();
 
 // 공동육아 부화 진행도 관리 (roomId -> progress)
 const hatchProgressMap = new Map();
+
+// 상황극 로직용 준비 상태 관리 (Map - 전역)
+const rolePlayReadyMap = new Map();
+
+// 상황극 중복 시작 방지용 Set (race condition 해결)
+const playRoomStartedSet = new Set();
+// 상황극 방별 참가자 목록 (play_room_N -> [petId1, petId2])
+const roomParticipantsMap = new Map();
+// 턴제 라운드 관리 (play_room_N -> Map<petId, { role, name, content }>)
+const roomChatRoundMap = new Map();
+// 방별 현재 시나리오 (play_room_N -> scenario 객체)
+const roomScenarioMap = new Map();
 
 io.on("connection", (socket) => {
   // 새 사용자가 연결될 때마다 로비 접속자 수 브로드캐스트
@@ -221,12 +240,13 @@ io.on("connection", (socket) => {
   });
 
   // 공동육아방(ChildRoom) 입장/퇴장 관리
-  socket.on("join_child_room", async ({ childId, petName }) => {
+  socket.on("join_child_room", async ({ childId, petId, petName }) => {
     const roomName = `child_room_${childId}`;
     socket.join(roomName);
 
-    // 소켓 객체에 정보 저장 (연결 끊김 대비)
+    // 소켓 객체에 정보 저장 (연결 끊김 대비 및 역할 배정용)
     socket.childRoomId = childId;
+    socket.petId = petId;
     socket.childPetName = petName;
 
     // 이 방에 이미 접속한 소켓들 확인 (나 포함 인원수가 1보다 크면 상대가 있는 것)
@@ -256,6 +276,10 @@ io.on("connection", (socket) => {
     const roomName = `child_room_${childId}`;
     socket.leave(roomName);
     socket.to(roomName).emit("spouse_left_child_room", petName);
+
+    // 상황극 준비 상태 제거
+    cleanupRolePlayReady(childId);
+
     delete socket.childRoomId;
     delete socket.childPetName;
   });
@@ -361,8 +385,278 @@ io.on("connection", (socket) => {
     io.in(roomName).emit("child_action_finished");
   });
 
+  // --- 상황극(Role-Play) 관련 소켓 로직 ---
+
+  // 상황극 페이지 전용 입장 이벤트
+  // childRoom 과 별개의 play_room 으로 관리하여 타이밍 충돌 방지
+  socket.on("join_play_room", async ({ childId, petId, petName }) => {
+    const roomName = `play_room_${childId}`;
+
+    // 소켓 정보 저장
+    socket.petId = petId;
+    socket.playRoomId = childId;
+    socket.join(roomName);
+
+    const sockets = await io.in(roomName).fetchSockets();
+    console.log(
+      `[PLAY] ${petName}(${petId}) joined ${roomName}. Total: ${sockets.length}`,
+    );
+
+    if (sockets.length < 2) {
+      // 아직 혼자 — 대기 상태 알림
+      socket.emit("play_room_waiting");
+      return;
+    }
+
+    // ✅ 중복 시작 차단: 이미 AI 시작된 방이맴 스킵 (race condition 해결)
+    if (playRoomStartedSet.has(roomName)) {
+      console.log(`[PLAY] ${roomName} already started. Skipping.`);
+      return;
+    }
+    playRoomStartedSet.add(roomName); // 선점 등록
+
+    // 참가자 목록 수집
+    const participantIds = sockets
+      .map((s) => String(s.petId))
+      .filter((id) => id && id !== "undefined");
+    console.log(
+      `[PLAY] All ready! Participants: ${JSON.stringify(participantIds)}`,
+    );
+
+    // 참가자 목록 및 라운드 저장
+    roomParticipantsMap.set(roomName, participantIds);
+    roomChatRoundMap.set(roomName, new Map());
+
+    try {
+      // AI가 시나리오 + 역할 + 오프닝 멘트를 한 번에 생성
+      const aiResult = await generateRolePlay(participantIds);
+      console.log(`[PLAY] AI scenario:`, aiResult.scenario?.title);
+
+      // 시나리오를 방에 저장해두어 채팅 채점 시 참조
+      roomScenarioMap.set(roomName, aiResult.scenario);
+
+      io.in(roomName).emit("role_play_started", {
+        scenario: aiResult.scenario,
+        roles: aiResult.rolesAssignment,
+      });
+      io.in(roomName).emit("role_play_message", {
+        senderId: "child_pet",
+        senderName: "자식 펫 🐾",
+        content: aiResult.openingMent,
+        role: aiResult.scenario?.childRole || "아기 펫",
+        timestamp: new Date(),
+      });
+    } catch (err) {
+      console.error("[PLAY] OpenAI Error:", err.message);
+      // 폴백: 에러 시 방 선점 해제 후 대기 상태로 복구
+      playRoomStartedSet.delete(roomName);
+      io.in(roomName).emit("role_play_message", {
+        senderId: "child_pet",
+        senderName: "자식 펫 🐾",
+        content:
+          "앗, 상황극을 준비하다가 실수했어요! 잠시 후 다시 시도해볼게요 😅",
+        role: "아기 펫",
+        timestamp: new Date(),
+      });
+    }
+  });
+
+  // 상황극 방 퇴장 — 상대방에게 알리고 상태 초기화
+  socket.on("leave_play_room", async ({ childId, petName }) => {
+    const roomName = `play_room_${childId}`;
+    // 상대방에게 퇴장 알림 후 강제 종료
+    socket
+      .to(roomName)
+      .emit("play_partner_left", { name: petName || "상대방" });
+    socket.leave(roomName);
+    delete socket.playRoomId;
+    const remaining = await io.in(roomName).fetchSockets();
+    if (remaining.length === 0) {
+      playRoomStartedSet.delete(roomName);
+      roomParticipantsMap.delete(roomName);
+      roomChatRoundMap.delete(roomName);
+      console.log(`[PLAY] ${roomName} fully cleared.`);
+    }
+  });
+
+  // 상황극 채팅: 1인 1회 발언 → 아기 펫 반응 → 다음 라운드
+  socket.on(
+    "role_play_chat",
+    async ({ childId, senderId, senderName, content, role, scenarioId }) => {
+      const roomName = `play_room_${childId}`;
+      // roomScenarioMap에서 시나리오 조회 (고정 목록 없음)
+      const scenario = roomScenarioMap.get(roomName);
+      const round = roomChatRoundMap.get(roomName);
+      if (!round) return;
+
+      // 이미 이번 라운드에 발언한 경우 차단
+      if (round.has(String(senderId))) {
+        socket.emit("play_already_spoke");
+        return;
+      }
+
+      // 발언 등록 & 방 전체에 메시지 전달
+      round.set(String(senderId), { role, name: senderName, content });
+      io.in(roomName).emit("role_play_message", {
+        senderId,
+        senderName,
+        content,
+        role,
+        timestamp: new Date(),
+      });
+
+      if (!scenario) return;
+
+      // 두 명 모두 발언했는지 확인
+      const participants = roomParticipantsMap.get(roomName) || [];
+      const allSpoke =
+        participants.length >= 2 && participants.every((pid) => round.has(pid));
+
+      if (allSpoke) {
+        const roundMessages = Array.from(round.values());
+        const roundSnapshot = new Map(round); // 채점용 스냅샷
+        roomChatRoundMap.set(roomName, new Map()); // 즉시 라운드 초기화
+
+        // 채점 (평균) - 두 발언을 평가해 공유 점수 산출
+        let sharedScore = 0;
+        try {
+          const scores = await Promise.all(
+            participants.map(async (pid) => {
+              const msg = roundSnapshot.get(pid);
+              if (!msg) return 0;
+              return await scoreChat(msg.content, msg.role, msg.name, scenario);
+            }),
+          );
+          const valid = scores.filter((s) => s > 0);
+          sharedScore = valid.length
+            ? Math.round(valid.reduce((a, b) => a + b, 0) / valid.length)
+            : 0;
+          if (sharedScore > 0) {
+            io.in(roomName).emit("play_round_score", { score: sharedScore });
+          }
+        } catch (err) {
+          console.error("[PLAY] Scoring error:", err.message);
+        }
+
+        // 아기 펫 반응 생성
+        try {
+          const petReply = await generatePetReply(roundMessages, scenario);
+          io.in(roomName).emit("role_play_message", {
+            senderId: "child_pet",
+            senderName: "자식 펫 🐾",
+            content: petReply,
+            role: scenario?.childRole || "아기 펫",
+            timestamp: new Date(),
+          });
+          io.in(roomName).emit("play_round_start"); // 다음 라운드 시작 신호
+        } catch (err) {
+          console.error("[PLAY] Pet reply error:", err.message);
+          io.in(roomName).emit("play_round_start"); // 에러 시에도 다음 라운드 진행
+        }
+      } else {
+        socket.emit("play_waiting_other"); // 상대방 차례를 기다리는 중
+      }
+    },
+  );
+
+  // 상황극 종료: DB 능력치 적용 후 방 전체에 결과 브로드캐스트
+  socket.on("finish_play_room", async ({ childId, totalScore, roundCount }) => {
+    const roomName = `play_room_${childId}`;
+
+    // 이미 종료 처리된 방이면 스킵
+    if (!playRoomStartedSet.has(roomName)) return;
+
+    // 방 전체에 종료 중 알림
+    io.in(roomName).emit("play_game_ending");
+
+    // 점수 정규화 (avgScore 0~10)
+    const cnt = Math.max(1, roundCount || 1);
+    const avg = Math.max(0, Math.min(10, totalScore / cnt));
+    const t = avg / 10;
+    const calc = (lo, hi) => Math.round(lo + (hi - lo) * t);
+
+    const changes = {
+      stress: calc(5, -30),
+      empathy: calc(-3, 20),
+      affection: calc(-2, 15),
+      altruism: calc(0, 10),
+      knowledge: calc(-1, 12),
+      logic: calc(-2, 10),
+      health_hp: calc(-5, 10),
+      hunger: calc(5, -10),
+      cleanliness: calc(0, -5),
+      exp: Math.round(5 + avg * 6),
+    };
+
+    try {
+      const { pool } = require("./database/database");
+      await pool.query(
+        `
+        UPDATE pets SET
+          stress      = GREATEST(LEAST(stress      + $2,  100), 0),
+          empathy     = GREATEST(LEAST(empathy     + $3,  100), 0),
+          affection   = GREATEST(LEAST(affection   + $4,  100), 0),
+          altruism    = GREATEST(LEAST(altruism    + $5,  100), 0),
+          knowledge   = GREATEST(LEAST(knowledge   + $6,  100), 0),
+          logic       = GREATEST(LEAST(logic       + $7,  100), 0),
+          health_hp   = GREATEST(LEAST(health_hp   + $8,  100), 0),
+          hunger      = GREATEST(LEAST(hunger      + $9,  100), 0),
+          cleanliness = GREATEST(LEAST(cleanliness + $10, 100), 0),
+          exp         = exp + $11
+        WHERE id = $1
+      `,
+        [
+          childId,
+          changes.stress,
+          changes.empathy,
+          changes.affection,
+          changes.altruism,
+          changes.knowledge,
+          changes.logic,
+          changes.health_hp,
+          changes.hunger,
+          changes.cleanliness,
+          changes.exp,
+        ],
+      );
+
+      // 상태 초기화
+      playRoomStartedSet.delete(roomName);
+      roomParticipantsMap.delete(roomName);
+      roomChatRoundMap.delete(roomName);
+      roomScenarioMap.delete(roomName);
+      console.log(
+        `[PLAY] ${roomName} finished. avgScore=${Math.round(avg * 10)}`,
+      );
+
+      // 결과를 방 전체에 브로드캐스트
+      io.in(roomName).emit("play_game_finished", {
+        totalScore,
+        statChanges: { ...changes, avgScore: Math.round(avg * 10) },
+      });
+    } catch (err) {
+      console.error("[PLAY] finish error:", err.message);
+      socket.emit("play_game_error", {
+        message: "게임 종료 처리에 실패했습니다.",
+      });
+    }
+  });
+
+  // 상황극 클린업 함수
+  const cleanupRolePlayReady = (childId) => {
+    const roomName = `child_room_${childId}`;
+    const readySet = rolePlayReadyMap.get(roomName);
+    if (readySet) {
+      readySet.delete(socket.petId);
+      if (readySet.size === 0) rolePlayReadyMap.delete(roomName);
+    }
+  };
+
   // 순수 소켓 접속 종료 (창 닫힘 등)
   socket.on("disconnect", async () => {
+    // 상황극 준비 상태 제거
+    if (socket.childRoomId) cleanupRolePlayReady(socket.childRoomId);
+
     // 💡 1. 채팅방 비정상 종료 대응 (DB 퇴장 처리)
     const { roomId, petName: roomPetName } = socket;
     if (roomId && roomPetName) {

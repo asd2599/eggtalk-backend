@@ -1198,7 +1198,7 @@ const hatchPet = async (req, res) => {
 const performChildAction = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { actionType } = req.body;
+    const { actionType, score = 0, roundCount = 1 } = req.body;
 
     const parentResult = await pool.query(
       "SELECT child_id FROM pets WHERE user_id = $1",
@@ -1210,23 +1210,88 @@ const performChildAction = async (req, res) => {
     const childId = parentResult.rows[0].child_id;
 
     let updateQuery = "";
+    let statChanges = {};
+
     if (actionType === "FEED") {
       updateQuery =
         "UPDATE pets SET hunger = LEAST(hunger + 30, 100), exp = exp + 10 WHERE id = $1 RETURNING *";
+      statChanges = { hunger: 30, exp: 10 };
     } else if (actionType === "CLEAN") {
       updateQuery =
         "UPDATE pets SET cleanliness = LEAST(cleanliness + 30, 100), exp = exp + 10 WHERE id = $1 RETURNING *";
+      statChanges = { cleanliness: 30, exp: 10 };
     } else if (actionType === "PLAY") {
-      updateQuery =
-        "UPDATE pets SET stress = GREATEST(stress - 20, 0), exp = exp + 15 WHERE id = $1 RETURNING *";
+      // ── 점수 정규화 ─────────────────────────────
+      // totalScore는 라운드별 0~10점의 누적합이므로 라운드 수로 나눠 평균 산출
+      const avg = Math.max(
+        0,
+        Math.min(10, roundCount > 0 ? score / roundCount : 0),
+      );
+      // t: 0(최저) ~ 1(최고) 정규화 비율
+      const t = avg / 10;
+
+      // ── 능력치 변화 계산 (상황에 안맞으면 감점 반영) ────
+      // t < 0.4 이면 일부 능력치 감소, t >= 0.4 이면 증가
+      const calc = (low, high) => Math.round(low + (high - low) * t);
+
+      const changes = {
+        stress: calc(5, -30), // 낮으면 스트레스 +5, 높으면 -30
+        empathy: calc(-3, 20), // 낮으면 -3, 높으면 +20
+        affection: calc(-2, 15), // 낮으면 -2, 높으면 +15
+        altruism: calc(0, 10), // 낮으면 변화없음, 높으면 +10
+        knowledge: calc(-1, 12), // 낮으면 -1, 높으면 +12
+        logic: calc(-2, 10), // 낮으면 -2, 높으면 +10
+        health_hp: calc(-5, 10), // 낮으면 -5, 높으면 +10
+        hunger: calc(5, -10), // 놀면 배고파짐 (낮으면 덜 배고파지고 높으면 더 배고파짐)
+        cleanliness: calc(0, -5), // 놀면 지저분해짐
+        exp: Math.round(5 + avg * 6), // 5~65 (항상 증가)
+      };
+
+      updateQuery = `
+        UPDATE pets SET
+          stress      = GREATEST(LEAST(stress      + $2,  100), 0),
+          empathy     = GREATEST(LEAST(empathy     + $3,  100), 0),
+          affection   = GREATEST(LEAST(affection   + $4,  100), 0),
+          altruism    = GREATEST(LEAST(altruism    + $5,  100), 0),
+          knowledge   = GREATEST(LEAST(knowledge   + $6,  100), 0),
+          logic       = GREATEST(LEAST(logic       + $7,  100), 0),
+          health_hp   = GREATEST(LEAST(health_hp   + $8,  100), 0),
+          hunger      = GREATEST(LEAST(hunger      + $9,  100), 0),
+          cleanliness = GREATEST(LEAST(cleanliness + $10, 100), 0),
+          exp         = exp + $11
+        WHERE id = $1
+        RETURNING *`;
+
+      const childResult = await pool.query(updateQuery, [
+        childId,
+        changes.stress,
+        changes.empathy,
+        changes.affection,
+        changes.altruism,
+        changes.knowledge,
+        changes.logic,
+        changes.health_hp,
+        changes.hunger,
+        changes.cleanliness,
+        changes.exp,
+      ]);
+
+      statChanges = { ...changes, avgScore: Math.round(avg * 10) };
+      return res.status(200).json({
+        message: "놀이 완료",
+        childPet: childResult.rows[0],
+        statChanges,
+      });
     } else {
       return res.status(400).json({ message: "유효하지 않은 액션입니다." });
     }
 
     const childResult = await pool.query(updateQuery, [childId]);
-    return res
-      .status(200)
-      .json({ message: "액션 수행 완료", childPet: childResult.rows[0] });
+    return res.status(200).json({
+      message: "액션 수행 완료",
+      childPet: childResult.rows[0],
+      statChanges,
+    });
   } catch (error) {
     console.error("performChildAction error:", error);
     return res
