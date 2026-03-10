@@ -363,4 +363,36 @@ router.patch(
   petController.renamePet,
 );
 
+/**
+ * @swagger
+ * /api/pets/abandon/{childId}:
+ *   delete:
+ *     summary: "자식 펫 파양하기"
+ *     description: "지정된 자식 펫을 데이터베이스에서 삭제하고, 관련 부모 펫의 교배 데이터(child_id, spouse_id)를 모두 초기화합니다."
+ *     tags: [Pets]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: childId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: "파양할 자식 펫의 ID"
+ *     responses:
+ *       200:
+ *         description: "파양 완료 (관계 초기화 및 펫 데이터 삭제)"
+ *       400:
+ *         description: "잘못된 요청"
+ *       404:
+ *         description: "해당 자식 펫을 찾지 못함"
+ *       500:
+ *         description: "서버 에러"
+ */
+router.delete(
+  "/api/pets/abandon/:childId",
+  authenticateToken,
+  petController.abandonPet,
+);
+
 module.exports = router;
