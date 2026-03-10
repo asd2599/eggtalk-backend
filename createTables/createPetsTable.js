@@ -3,7 +3,7 @@ const { pool } = require("../database/database");
 const createTableQuery = `
     CREATE TABLE IF NOT EXISTS pets (
         id SERIAL PRIMARY KEY,
-        user_id INTEGER UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
         name VARCHAR(50) NOT NULL,
         color VARCHAR(50) NOT NULL,
         level INTEGER DEFAULT 1,
@@ -33,6 +33,8 @@ const createTableQuery = `
 `;
 
 const alterTableQuery = `
+    ALTER TABLE pets DROP CONSTRAINT IF EXISTS pets_user_id_key;
+    ALTER TABLE pets ALTER COLUMN user_id DROP NOT NULL;
     ALTER TABLE pets
     ADD COLUMN IF NOT EXISTS extroversion INTEGER DEFAULT 0,
     ADD COLUMN IF NOT EXISTS humor INTEGER DEFAULT 0,
@@ -41,7 +43,11 @@ const alterTableQuery = `
     ADD COLUMN IF NOT EXISTS curiosity INTEGER DEFAULT 0,
     ADD COLUMN IF NOT EXISTS face VARCHAR(50) DEFAULT 'neutral',
     ADD COLUMN IF NOT EXISTS shape VARCHAR(50) DEFAULT 'circle',
-    ADD COLUMN IF NOT EXISTS hand VARCHAR(50) DEFAULT 'open';
+    ADD COLUMN IF NOT EXISTS hand VARCHAR(50) DEFAULT 'open',
+    ADD COLUMN IF NOT EXISTS spouse_id INTEGER REFERENCES pets(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS child_id INTEGER REFERENCES pets(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS parent1_id INTEGER REFERENCES pets(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS parent2_id INTEGER REFERENCES pets(id) ON DELETE SET NULL;
 `;
 
 const createTable = async () => {

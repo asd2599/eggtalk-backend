@@ -223,4 +223,176 @@ router.post(
   petController.getAutoComment,
 );
 
+/**
+ * @swagger
+ * /api/pets/breed:
+ *   post:
+ *     summary: "펫 교배 (자식 펫 생성)"
+ *     description: "두 펫의 교배를 통해 새로운 자식 펫을 데이터베이스에 생성합니다."
+ *     tags: [Pets]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - parent1Name
+ *               - parent2Name
+ *             properties:
+ *               parent1Name:
+ *                 type: string
+ *               parent2Name:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: "자식 펫 생성 성공"
+ *       400:
+ *         description: "부모 펫 정보를 찾을 수 없음"
+ */
+router.post("/api/pets/breed", authenticateToken, petController.breedPets);
+
+/**
+ * @swagger
+ * /api/pets/child:
+ *   get:
+ *     summary: "자식 펫 정보 조회"
+ *     description: "현재 로그인한 사용자의 메인 펫의 자식 펫 정보를 가져옵니다."
+ *     tags: [Pets]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: "성공적으로 자식 펫 정보를 가져옴"
+ *       404:
+ *         description: "자식 펫을 찾을 수 없음"
+ */
+router.get("/api/pets/child", authenticateToken, petController.getChildPet);
+
+/**
+ * @swagger
+ * /api/pets/child/action:
+ *   post:
+ *     summary: "자식 펫 액션 수행"
+ *     description: "자식 펫에게 먹이주기 등의 액션을 수행합니다."
+ *     tags: [Pets]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - actionType
+ *             properties:
+ *               actionType:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: "액션 수행 성공"
+ */
+router.post(
+  "/api/pets/child/action",
+  authenticateToken,
+  petController.performChildAction,
+);
+
+/**
+ * @swagger
+ * /api/pets/hatch:
+ *   post:
+ *     summary: "자식 펫 부화"
+ *     description: "협동 게임 완료 후 자식 펫을 부화 상태로 변경합니다."
+ *     tags: [Pets]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - childId
+ *             properties:
+ *               childId:
+ *                 type: integer
+ *     responses:
+ *       200:
+ *         description: "부화 성공"
+ */
+router.post("/api/pets/hatch", authenticateToken, petController.hatchPet);
+
+/**
+ * @swagger
+ * /api/pets/{petId}/name:
+ *   patch:
+ *     summary: "펫 이름 변경"
+ *     description: "펫의 이름을 새로운 이름으로 업데이트합니다."
+ *     tags: [Pets]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: petId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *             properties:
+ *               name:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: "변경 성공"
+ */
+router.patch(
+  "/api/pets/:petId/name",
+  authenticateToken,
+  petController.renamePet,
+);
+
+/**
+ * @swagger
+ * /api/pets/abandon/{childId}:
+ *   delete:
+ *     summary: "자식 펫 파양하기"
+ *     description: "지정된 자식 펫을 데이터베이스에서 삭제하고, 관련 부모 펫의 교배 데이터(child_id, spouse_id)를 모두 초기화합니다."
+ *     tags: [Pets]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: childId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: "파양할 자식 펫의 ID"
+ *     responses:
+ *       200:
+ *         description: "파양 완료 (관계 초기화 및 펫 데이터 삭제)"
+ *       400:
+ *         description: "잘못된 요청"
+ *       404:
+ *         description: "해당 자식 펫을 찾지 못함"
+ *       500:
+ *         description: "서버 에러"
+ */
+router.delete(
+  "/api/pets/abandon/:childId",
+  authenticateToken,
+  petController.abandonPet,
+);
+
 module.exports = router;

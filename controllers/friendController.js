@@ -11,8 +11,8 @@ exports.requestFriend = async (req, res) => {
     // receiver_id가 없고 receiver_pet_name만 온 경우 pets 테이블 조인 검색
     if (!finalReceiverId && receiver_pet_name) {
       const petUserResult = await pool.query(
-        "SELECT user_id FROM pets WHERE name = $1",
-        [receiver_pet_name],
+        "SELECT user_id FROM pets WHERE LOWER(name) = LOWER($1)",
+        [receiver_pet_name.trim()],
       );
       if (petUserResult.rows.length > 0) {
         finalReceiverId = petUserResult.rows[0].user_id;
