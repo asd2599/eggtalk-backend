@@ -529,10 +529,6 @@ const analyzeTendency = async (req, res) => {
         name: pet.name,
         level: pet.level,
         exp: pet.exp,
-        hunger: pet.hunger,
-        cleanliness: pet.cleanliness,
-        health_hp: pet.health_hp,
-        stress: pet.stress,
         affection: pet.affection,
         knowledge: pet.knowledge,
         empathy: pet.empathy,
@@ -546,27 +542,41 @@ const analyzeTendency = async (req, res) => {
       });
 
       const systemPrompt = `
-        다음은 가상의 인공지능 펫의 종합적인 현재 능력치 및 상태(JSON 포맷) 데이터야: 
-        ${statsJson}
-        
-        네 목표는 이 데이터를 종합적으로 고려하여 이 펫에게 가장 어울리는 단어를 아래 10개의 **영문 소문자** 성향 중에서 단 '1개'만 선택하고, 그 성향에 어울리는 외형(face, hand, shape)을 함께 결정하는 거야.
-        
-        **특히 펫의 '이름'(${pet.name})이 가지는 느낌이나 의미도 성향과 외형 결정에 적절히 반영해줘.** 이름의 뉘앙스에 따라 성격이 결정되는 인격체라고 생각하고 분석해.
+ 너는 뻔한 걸 세상에서 제일 싫어하는 '괴짜 펫 인격 부여술사'야. 
+  제공된 기질 데이터(${statsJson})와 이름(${pet.name})을 엮어서, 유저가 보자마자 "헐, 내 펫 성격 미쳤네" 할 만큼 입체적이고 개성 있는 캐릭터를 만들어줘.
 
-        [선택 가능한 외형 목록 - 반드시 이 중에서만 선택]
-        1. face (표정 12종): angry, confused, dizzy, excited, gloomy, neutral, playful, relaxed, relieved, sad, smug, tired
-        2. hand (손 모양 6종): closed, open, peace, point, rock, thumb
-        3. shape (몸체 모양 4종): circle, rhombus, square, squircle
-        
-        다음 JSON 형식으로만 응답해:
-        {
-          "tendency": "(이름과 능력치를 종합적으로 고려하여 가장 어울리는 성향 1개를 한국어 한단어로)",
-          "face": "(위 목록 중 선택)",
-          "hand": "(위 목록 중 선택)",
-          "shape": "(위 목록 중 선택)",
-          "reason": "(이 성향과 외형을 선택한 이유를 사용자가 보기 좋게 1문장으로 한국어로 설명)"
-        }
-      `;
+  [1차원적 단어 절대 사용 금지 (Ban List)]
+  '열정', '정열', '반항', '귀여움', '활발함', '우울함', '착함' 같은 단순한 감정/상태 단어는 절대 쓰지 마!
+
+  [성향(tendency) 창조 공식: 스탯의 '조합'을 봐라!]
+  단일 수치만 보지 말고, 수치들 간의 시너지를 분석해서 아주 구체적인 '페르소나(명사형)'를 하나 도출해.
+  - 예시 1) logic이 높고 empathy가 낮다 -> "팩트폭격기", "냉혈한"
+  - 예시 2) curiosity가 높고 점수들이 널뛴다 -> "사고뭉치", "미치광이발명가"
+  - 예시 3) altruism이 높지만 extroversion이 낮다 -> "숨은조력자", "소심한천사"
+  - 예시 4) 모든 수치가 바닥이다 -> "귀차니스트", "현타온애늙은이"
+  - 위 예시 외에도 데이터의 결합을 보고 너만의 기발하고 디테일한 명사(단어)를 창조해!
+
+  [개성 만점 외형 조합 가이드]
+  성향이 정해졌으면, 그 성격에 맞는 가장 '위트 있고 찰떡같은' 외형(face, hand, shape)을 매칭해.
+  - '팩트폭격기'라면 킹받는 smug 표정에 point(지적하는 손).
+  - '귀차니스트'라면 tired 표정에 모든 걸 내려놓은 open 손.
+  - '사고뭉치'라면 눈 돌아간 dizzy 표정에 rock 손.
+  이렇게 뻔하지 않은, 서사가 담긴 조합을 만들어!
+
+  [선택 가능한 외형 목록 - 목록 외 단어 사용 금지]
+  1. face: angry, confused, dizzy, excited, gloomy, neutral, playful, relaxed, relieved, sad, smug, tired (총 12종)
+  2. hand: closed, open, peace, point, rock, thumb (총 6종)
+  3. shape: circle, rhombus, square, squircle (총 4종)
+
+  반드시 아래 JSON 형식으로만 응답해:
+  {
+    "tendency": "(능력치와 이름의 뉘앙스를 꿰뚫는 날카로운 한국어 성향 단어 1개)",
+    "face": "(목록 중 가장 개성 있는 것 선택)",
+    "hand": "(목록 중 상황에 맞는 손 모양 선택)",
+    "shape": "(몸체 모양 선택)",
+    "reason": "(왜 이 파츠들이 이 펫의 '영혼'을 대변하는지 사용자에게 매력적으로 1문장 설명)"
+  }
+`;
 
       try {
         const completion = await openai.chat.completions.create({
@@ -574,7 +584,7 @@ const analyzeTendency = async (req, res) => {
           response_format: { type: "json_object" },
           messages: [{ role: "system", content: systemPrompt }],
           max_tokens: 150,
-          temperature: 0.5,
+          temperature: 0.7,
         });
 
         const responseContent = completion.choices[0].message.content;
@@ -635,8 +645,8 @@ const giftToPet = async (req, res) => {
     }
 
     // 대상 펫 정보 조회
-    const getQuery = "SELECT * FROM pets WHERE name = $1";
-    const getResult = await pool.query(getQuery, [targetPetName]);
+    const getQuery = "SELECT * FROM pets WHERE LOWER(name) = LOWER($1)";
+    const getResult = await pool.query(getQuery, [targetPetName.trim()]);
 
     if (getResult.rows.length === 0) {
       return res
@@ -833,6 +843,404 @@ const getAutoComment = async (req, res) => {
   }
 };
 
+// 펫 교배 (자식 펫 탄생)
+const breedPets = async (req, res) => {
+  const { parent1Name, parent2Name } = req.body;
+  if (!parent1Name || !parent2Name) {
+    return res.status(400).json({ message: "부모 펫 이름이 필요합니다." });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // 부모 펫 정보 조회
+    const p1Result = await client.query("SELECT * FROM pets WHERE name = $1", [
+      parent1Name,
+    ]);
+    const p2Result = await client.query("SELECT * FROM pets WHERE name = $1", [
+      parent2Name,
+    ]);
+
+    if (p1Result.rows.length === 0 || p2Result.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "부모 펫을 찾을 수 없습니다." });
+    }
+
+    const p1 = p1Result.rows[0];
+    const p2 = p2Result.rows[0];
+
+    // 동시 클릭 등으로 인해 이미 서로 짝이 되어 자식을 낳은 상태면 기존 자식을 성공으로 반환
+    if (p1.child_id && p2.child_id && p1.child_id === p2.child_id) {
+      await client.query("ROLLBACK");
+      const existingChildResult = await client.query(
+        "SELECT * FROM pets WHERE id = $1",
+        [p1.child_id],
+      );
+      return res.status(200).json({
+        message: "이미 탄생했습니다!",
+        childPet: existingChildResult.rows[0],
+      });
+    }
+
+    // 교배 횟수 제한 (이미 다른 짝이 있거나 예외적인 경우 방지)
+    if (p1.child_id || p2.child_id || p1.spouse_id || p2.spouse_id) {
+      await client.query("ROLLBACK");
+      return res
+        .status(400)
+        .json({ message: "이미 다른 펫과 교배되었거나 가족이 있는 펫입니다." });
+    }
+
+    // 자식 능력치 계산 (평균 + 소폭 보너스)
+    const calcStat = (s1, s2) =>
+      Math.min(100, Math.floor((s1 + s2) / 2) + Math.floor(Math.random() * 10));
+
+    const childStats = {
+      level: 1,
+      exp: 0,
+      hunger: 100,
+      cleanliness: 100,
+      health_hp: 100,
+      stress: 0,
+      knowledge: calcStat(p1.knowledge, p2.knowledge),
+      affection: calcStat(p1.affection, p2.affection),
+      altruism: calcStat(p1.altruism, p2.altruism),
+      logic: calcStat(p1.logic, p2.logic),
+      empathy: calcStat(p1.empathy, p2.empathy),
+      extroversion: calcStat(p1.extroversion, p2.extroversion),
+      humor: calcStat(p1.humor, p2.humor),
+      openness: calcStat(p1.openness, p2.openness),
+      directness: calcStat(p1.directness, p2.directness),
+      curiosity: calcStat(p1.curiosity, p2.curiosity),
+      tendency: "neutral", // 초기화
+      face: "neutral",
+      shape: Math.random() > 0.5 ? p1.shape : p2.shape, // 유전
+      hand: Math.random() > 0.5 ? p1.hand : p2.hand, // 유전
+    };
+
+    const childName = `${p1.name}와(과) ${p2.name}의 알`;
+    const childColor = p1.color; // 임시색상 복사
+
+    // 💡 user_id가 NULL인 자식 펫 INSERT
+    const insertQuery = `
+      INSERT INTO pets (
+        user_id, name, color, level, exp, hunger, cleanliness, health_hp, stress,
+        knowledge, affection, altruism, logic, empathy, 
+        extroversion, humor, openness, directness, curiosity,
+        tendency, face, shape, hand, parent1_id, parent2_id
+      ) VALUES (
+        NULL, $1, $2, $3, $4, $5, $6, $7, $8, 
+        $9, $10, $11, $12, $13, 
+        $14, $15, $16, $17, $18,
+        $19, $20, $21, $22, $23, $24
+      ) RETURNING *;
+    `;
+
+    const insertValues = [
+      childName,
+      childColor,
+      childStats.level,
+      childStats.exp,
+      childStats.hunger,
+      childStats.cleanliness,
+      childStats.health_hp,
+      childStats.stress,
+      childStats.knowledge,
+      childStats.affection,
+      childStats.altruism,
+      childStats.logic,
+      childStats.empathy,
+      childStats.extroversion,
+      childStats.humor,
+      childStats.openness,
+      childStats.directness,
+      childStats.curiosity,
+      childStats.tendency,
+      childStats.face,
+      childStats.shape,
+      childStats.hand,
+      p1.id,
+      p2.id,
+    ];
+
+    const childResult = await client.query(insertQuery, insertValues);
+    const childPet = childResult.rows[0];
+
+    // 부모 펫 업데이트 (가족 관계 매핑)
+    await client.query(
+      "UPDATE pets SET spouse_id = $1, child_id = $2 WHERE id = $3",
+      [p2.id, childPet.id, p1.id],
+    );
+    await client.query(
+      "UPDATE pets SET spouse_id = $1, child_id = $2 WHERE id = $3",
+      [p1.id, childPet.id, p2.id],
+    );
+
+    await client.query("COMMIT");
+
+    return res.status(201).json({
+      message: "생명이 탄생했습니다!",
+      childPet,
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("breedPets error:", error);
+    return res
+      .status(500)
+      .json({ message: "교배 에러 세부 정보: " + error.message });
+  } finally {
+    client.release();
+  }
+};
+
+const getChildPet = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const parentResult = await pool.query(
+      "SELECT * FROM pets WHERE user_id = $1",
+      [userId],
+    );
+    if (parentResult.rows.length === 0) {
+      return res.status(404).json({ message: "메인 펫이 없습니다." });
+    }
+    const parentPet = parentResult.rows[0];
+
+    if (!parentPet.child_id) {
+      return res
+        .status(200)
+        .json({ childPet: null, message: "자식 펫이 없습니다." });
+    }
+
+    const childResult = await pool.query("SELECT * FROM pets WHERE id = $1", [
+      parentPet.child_id,
+    ]);
+
+    if (childResult.rows.length === 0) {
+      return res.status(200).json({
+        childPet: null,
+        message: "자식 펫 데이터를 찾을 수 없습니다.",
+      });
+    }
+
+    // 배우자 펫 정보 조회
+    let spousePet = null;
+    if (parentPet.spouse_id) {
+      const spouseResult = await pool.query(
+        "SELECT * FROM pets WHERE id = $1",
+        [parentPet.spouse_id],
+      );
+      if (spouseResult.rows.length > 0) {
+        spousePet = spouseResult.rows[0];
+      }
+    }
+
+    return res.status(200).json({
+      childPet: childResult.rows[0],
+      myPet: parentPet,
+      spousePet: spousePet,
+    });
+  } catch (error) {
+    console.error("getChildPet error:", error);
+    return res.status(500).json({ message: "서버 에러가 발생했습니다." });
+  }
+};
+
+// 펫 부화 처리 API (유전 및 초기화 로직 포함)
+const hatchPet = async (req, res) => {
+  try {
+    const { childId } = req.body;
+    if (!childId) {
+      return res.status(400).json({ message: "자식 펫 ID가 필요합니다." });
+    }
+
+    // 1. 부모 펫 찾기 (이 아이를 child_id로 가지고 있는 펫들)
+    const parentsResult = await pool.query(
+      "SELECT * FROM pets WHERE child_id = $1",
+      [childId],
+    );
+
+    let stats = {
+      knowledge: 0,
+      affection: 0,
+      altruism: 0,
+      logic: 0,
+      empathy: 0,
+      extroversion: 0,
+      humor: 0,
+      openness: 0,
+      directness: 0,
+      curiosity: 0,
+    };
+
+    if (parentsResult.rows.length > 0) {
+      const pCount = parentsResult.rows.length;
+      parentsResult.rows.forEach((p) => {
+        Object.keys(stats).forEach((k) => {
+          stats[k] += p[k] || 0;
+        });
+      });
+      // 평균 계산
+      Object.keys(stats).forEach((k) => {
+        stats[k] = Math.round(stats[k] / pCount);
+      });
+    }
+
+    // 2. 성향 기반 외형 결정 로직
+    // 모양(shape): logic+altruism vs affection+empathy vs humor+extroversion
+    let shape = "circle";
+    const shapeScore = {
+      square: (stats.logic || 0) + (stats.altruism || 0),
+      circle: (stats.affection || 0) + (stats.empathy || 0),
+      star: (stats.humor || 0) + (stats.extroversion || 0),
+    };
+    shape = Object.keys(shapeScore).reduce((a, b) =>
+      shapeScore[a] > shapeScore[b] ? a : b,
+    );
+
+    // 색상(color): 지식(blue), 호기심(orange), 애정(rose), 이타심(emerald)
+    let color = "blue";
+    const colorScore = {
+      blue: stats.knowledge || 0,
+      orange: stats.curiosity || 0,
+      rose: stats.affection || 0,
+      emerald: stats.altruism || 0,
+    };
+    color = Object.keys(colorScore).reduce((a, b) =>
+      colorScore[a] > colorScore[b] ? a : b,
+    );
+
+    // 표정(face): 애정/공감 기반
+    let face = "neutral";
+    if (stats.affection > 60 || stats.empathy > 60) face = "happy";
+    else if (stats.logic > 70) face = "smart";
+
+    // 손(hand): 외향성 기반
+    const hand = stats.extroversion > 50 ? "open" : "closed";
+
+    // 성향 문자열(tendency)
+    const tendency =
+      stats.extroversion > 60
+        ? "활발한"
+        : stats.logic > 60
+          ? "차분한"
+          : "온순한";
+
+    // 3. 자식 펫 업데이트 (초기 수치 50, 레벨 1, 경험치 0, 유전된 능력치 및 외형)
+    const updateResult = await pool.query(
+      `UPDATE pets SET 
+        is_hatched = TRUE,
+        level = 1,
+        exp = 0,
+        hunger = 50,
+        cleanliness = 50,
+        health_hp = 50,
+        stress = 50,
+        knowledge = $1, affection = $2, altruism = $3, logic = $4, empathy = $5,
+        extroversion = $6, humor = $7, openness = $8, directness = $9, curiosity = $10,
+        shape = $11, color = $12, face = $13, hand = $14, tendency = $15
+      WHERE id = $16 RETURNING *`,
+      [
+        stats.knowledge,
+        stats.affection,
+        stats.altruism,
+        stats.logic,
+        stats.empathy,
+        stats.extroversion,
+        stats.humor,
+        stats.openness,
+        stats.directness,
+        stats.curiosity,
+        shape,
+        color,
+        face,
+        hand,
+        tendency,
+        childId,
+      ],
+    );
+
+    if (updateResult.rows.length === 0) {
+      return res.status(404).json({ message: "펫을 찾을 수 없습니다." });
+    }
+
+    return res.status(200).json({
+      message: "부화가 성공적으로 완료되었습니다!",
+      pet: updateResult.rows[0],
+    });
+  } catch (error) {
+    console.error("hatchPet error:", error);
+    return res
+      .status(500)
+      .json({ message: "부화 처리 중 서버 에러가 발생했습니다." });
+  }
+};
+
+const performChildAction = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { actionType } = req.body;
+
+    const parentResult = await pool.query(
+      "SELECT child_id FROM pets WHERE user_id = $1",
+      [userId],
+    );
+    if (parentResult.rows.length === 0 || !parentResult.rows[0].child_id) {
+      return res.status(404).json({ message: "자식 펫이 없습니다." });
+    }
+    const childId = parentResult.rows[0].child_id;
+
+    let updateQuery = "";
+    if (actionType === "FEED") {
+      updateQuery =
+        "UPDATE pets SET hunger = LEAST(hunger + 30, 100), exp = exp + 10 WHERE id = $1 RETURNING *";
+    } else if (actionType === "CLEAN") {
+      updateQuery =
+        "UPDATE pets SET cleanliness = LEAST(cleanliness + 30, 100), exp = exp + 10 WHERE id = $1 RETURNING *";
+    } else if (actionType === "PLAY") {
+      updateQuery =
+        "UPDATE pets SET stress = GREATEST(stress - 20, 0), exp = exp + 15 WHERE id = $1 RETURNING *";
+    } else {
+      return res.status(400).json({ message: "유효하지 않은 액션입니다." });
+    }
+
+    const childResult = await pool.query(updateQuery, [childId]);
+    return res
+      .status(200)
+      .json({ message: "액션 수행 완료", childPet: childResult.rows[0] });
+  } catch (error) {
+    console.error("performChildAction error:", error);
+    return res
+      .status(500)
+      .json({ message: "액션 처리 중 오류가 발생:" + error.message });
+  }
+};
+
+// 펫 이름 변경 API
+const renamePet = async (req, res) => {
+  try {
+    const { petId } = req.params;
+    const { name } = req.body;
+
+    if (!name) return res.status(400).json({ message: "이름을 입력해주세요." });
+
+    const result = await pool.query(
+      "UPDATE pets SET name = $1 WHERE id = $2 RETURNING *",
+      [name, petId],
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "펫을 찾을 수 없습니다." });
+    }
+
+    return res
+      .status(200)
+      .json({ message: "이름 변경 성공", pet: result.rows[0] });
+  } catch (error) {
+    console.error("renamePet error:", error);
+    return res.status(500).json({ message: "서버 에러가 발생했습니다." });
+  }
+};
+
 module.exports = {
   getMyPet,
   createPet,
@@ -842,4 +1250,9 @@ module.exports = {
   analyzeTendency,
   giftToPet,
   getAutoComment,
+  breedPets,
+  getChildPet,
+  performChildAction,
+  hatchPet,
+  renamePet,
 };

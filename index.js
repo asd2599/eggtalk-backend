@@ -60,6 +60,9 @@ const activeUsers = new Map();
 // socket.id -> petName
 const socketToPetName = new Map();
 
+// 공동육아 부화 진행도 관리 (roomId -> progress)
+const hatchProgressMap = new Map();
+
 io.on("connection", (socket) => {
   // 새 사용자가 연결될 때마다 로비 접속자 수 브로드캐스트
   io.emit("update_user_count", io.engine.clientsCount);
@@ -88,24 +91,56 @@ io.on("connection", (socket) => {
     if (callback) callback(Array.from(activeUsers.keys()));
   });
 
-  // DB 기반 상태 환경에서 통신을 위해서 소켓 Room 에만 입장 (방 관리는 DB에서 이미 끝남)
-  socket.on("join_dating_room", ({ roomId, petName }, callback) => {
-    // 💡 React StrictMode 등 이중 조인 요청에 의한 다중 시스템 메시지 도배 방지
+  // DB 기반 상태 환경에서 통신을 위해서 소켓 Room 에만 입장
+  socket.on("join_dating_room", async ({ roomId, petName }, callback) => {
     if (!socket.rooms.has(roomId)) {
       socket.join(roomId);
-      // 비정상 종료(창 닫기 등) 대응을 위해 소켓 객체에 정보 저장
       socket.roomId = roomId;
       socket.petName = petName;
 
-      // 이 방에 있는 사람들에게만(나 제외) 새로 입장했음을 알림
+      // 입장 메시지 브로드캐스트
       socket.to(roomId).emit("receive_dating_message", {
         sender: "System",
         message: `${petName}님이 방에 들어왔습니다!`,
         isSystem: true,
       });
+
+      // 💡 [추가] 방에 있는 모든 사람에게 현재 방 유저 정보(상태) 브로드캐스트
+      try {
+        const { pool } = require("./database/database"); // pool 참조
+        const roomResult = await pool.query(
+          "SELECT creator_pet_name, participant_pet_name FROM dating_rooms WHERE id = $1",
+          [roomId],
+        );
+
+        if (roomResult.rows.length > 0) {
+          const row = roomResult.rows[0];
+          const petNames = [
+            row.creator_pet_name,
+            row.participant_pet_name,
+          ].filter(Boolean);
+          const petResult = await pool.query(
+            "SELECT * FROM pets WHERE name = ANY($1)",
+            [petNames],
+          );
+
+          const users = petResult.rows.map((petRow) => ({
+            id: null,
+            petName: petRow.name,
+            petData: petRow,
+          }));
+
+          // 방 전체에 새로운 유저 목록 전송
+          io.to(roomId).emit("room_status", users);
+          console.log(
+            `[Socket] Room ${roomId} status broadcasted for ${petName}`,
+          );
+        }
+      } catch (err) {
+        console.error("Room status broadcast error:", err);
+      }
     }
 
-    // 입장 성공 응답
     if (callback) callback({ success: true, roomId });
   });
 
@@ -135,6 +170,46 @@ io.on("connection", (socket) => {
     },
   );
 
+  // 실시간 교배 요청 전송 알림
+  socket.on(
+    "send_breeding_request",
+    ({ roomId, requesterPetName, receiverPetName }) => {
+      socket.to(roomId).emit("receive_breeding_request", {
+        requesterPetName,
+        receiverPetName,
+      });
+    },
+  );
+
+  // 교배 요청 수락 (수락 시 방 전체에 리다이렉트 지시)
+  socket.on(
+    "accept_breeding_request",
+    ({ roomId, requesterPetName, receiverPetName }) => {
+      io.to(roomId).emit("breeding_accepted", {
+        roomId,
+        requesterPetName,
+        receiverPetName,
+      });
+    },
+  );
+
+  // 교배 요청 거절
+  socket.on(
+    "reject_breeding_request",
+    ({ roomId, requesterPetName, receiverPetName }) => {
+      socket.to(roomId).emit("breeding_rejected", {
+        requesterPetName,
+        receiverPetName,
+      });
+    },
+  );
+
+  // 교배 최종 성사(한 명이 버튼 클릭 후 API 응답 성공 시)
+  socket.on("child_created", ({ roomId, childPet }) => {
+    // 버튼을 안 누른 상대방에게 전달
+    socket.to(roomId).emit("receive_child_created", { childPet });
+  });
+
   // 방 퇴장 알림
   socket.on("leave_dating_room", ({ roomId, petName }) => {
     socket.to(roomId).emit("receive_dating_message", {
@@ -143,6 +218,97 @@ io.on("connection", (socket) => {
       isSystem: true,
     });
     socket.leave(roomId);
+  });
+
+  // 공동육아방(ChildRoom) 입장/퇴장 관리
+  socket.on("join_child_room", async ({ childId, petName }) => {
+    const roomName = `child_room_${childId}`;
+    socket.join(roomName);
+
+    // 소켓 객체에 정보 저장 (연결 끊김 대비)
+    socket.childRoomId = childId;
+    socket.childPetName = petName;
+
+    // 이 방에 이미 접속한 소켓들 확인 (나 포함 인원수가 1보다 크면 상대가 있는 것)
+    const sockets = await io.in(roomName).fetchSockets();
+    const spouseInRoom = sockets.length > 1;
+
+    // 온라인 유저 목록 (activeUsers 맵에서 키만 추출)
+    const onlineUsers = Array.from(activeUsers.keys());
+
+    // 부화 진행도 초기화 (이미 진행 중이 아니라면 0으로 시작)
+    if (!hatchProgressMap.has(roomName)) {
+      hatchProgressMap.set(roomName, 0);
+    }
+
+    // 막 진입한 본인에게 방 상태와 온라인 상태, 그리고 현재 부화 진행도를 함께 전송
+    socket.emit("child_room_status", {
+      isSpouseInRoom: spouseInRoom,
+      onlineUsers: onlineUsers,
+      hatchProgress: hatchProgressMap.get(roomName),
+    });
+
+    // 방에 있는 배우자(기존 인원)에게 내가 입장했음을 브로드캐스트
+    socket.to(roomName).emit("spouse_entered_child_room", petName);
+  });
+
+  socket.on("leave_child_room", ({ childId, petName }) => {
+    const roomName = `child_room_${childId}`;
+    socket.leave(roomName);
+    socket.to(roomName).emit("spouse_left_child_room", petName);
+    delete socket.childRoomId;
+    delete socket.childPetName;
+  });
+
+  // 부화 탭(클릭) 이벤트 처리
+  socket.on("hatch_tap", ({ childId }) => {
+    const roomName = `child_room_${childId}`;
+    let progress = hatchProgressMap.get(roomName) || 0;
+
+    // 한 번 클릭당 2%씩 증가 (총 50번 클릭 필요)
+    progress = Math.min(progress + 2, 100);
+    hatchProgressMap.set(roomName, progress);
+
+    // 해당 방 전체에 진행도 전파
+    io.in(roomName).emit("hatch_progress_updated", { progress });
+  });
+
+  // 부화 시작 요청 (한 명이 누르면 전체 시작)
+  socket.on("hatch_start_request", ({ childId }) => {
+    const roomName = `child_room_${childId}`;
+    hatchProgressMap.set(roomName, 0); // 시작 시 진행도 리셋
+    io.in(roomName).emit("hatch_started", { duration: 30 }); // 30초 제한 시간 부여
+  });
+
+  // 부화 초기화 (리셋 버튼용 혹은 재시작용)
+  socket.on("hatch_reset", ({ childId }) => {
+    const roomName = `child_room_${childId}`;
+    hatchProgressMap.set(roomName, 0);
+    io.in(roomName).emit("hatch_progress_updated", { progress: 0 });
+  });
+
+  // 협동 이름 변경 요청
+  socket.on(
+    "child_pet_rename_request",
+    ({ childId, newName, requesterName }) => {
+      const roomName = `child_room_${childId}`;
+      // 배우자에게만 제안 알림 전송
+      socket
+        .to(roomName)
+        .emit("child_pet_rename_proposed", { newName, requesterName });
+    },
+  );
+
+  // 이름 변경 응답 (동의/거절)
+  socket.on("child_pet_rename_response", ({ childId, approved, newName }) => {
+    const roomName = `child_room_${childId}`;
+    if (approved) {
+      // 승인 시 방 전체에 이름 변경 확정 알림 (DB 처리는 프론트에서 API 호출 권장하나 실시간 동기화 우선 전송)
+      io.in(roomName).emit("child_pet_rename_approved", { newName });
+    } else {
+      // 거절 시 제안자에게 거절 알림
+      socket.to(roomName).emit("child_pet_rename_rejected");
+    }
   });
 
   // 순수 소켓 접속 종료 (창 닫힘 등)
@@ -194,11 +360,18 @@ io.on("connection", (socket) => {
           }
         }
       } catch (err) {
-        console.error("Disconnect room cleanup error:", err);
+        console.error("Dating room disconnect cleanup error:", err);
       }
     }
 
-    // 💡 2. 접속 종료 시 Map에서 해당 세션 정보 제거
+    // 💡 2. 공동육아방 비정상 종료 대응
+    const { childRoomId, childPetName } = socket;
+    if (childRoomId && childPetName) {
+      const roomName = `child_room_${childRoomId}`;
+      socket.to(roomName).emit("spouse_left_child_room", childPetName);
+    }
+
+    // 💡 3. 접속 종료 시 Map에서 해당 세션 정보 제거 및 온라인 유저 목록 갱신
     const petName = socketToPetName.get(socket.id);
     if (petName) {
       const sockets = activeUsers.get(petName);
