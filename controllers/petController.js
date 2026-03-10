@@ -41,7 +41,16 @@ const createPet = async (req, res) => {
         .json({ message: "이름과 색상은 필수 입력값입니다." });
     }
 
-    // 펫 보유 중복 체크
+    // 1. 이름 중복 체크
+    const nameCheckQuery = "SELECT id FROM pets WHERE name = $1";
+    const nameCheckResult = await pool.query(nameCheckQuery, [name]);
+    if (nameCheckResult.rows.length > 0) {
+      return res.status(400).json({
+        message: "이미 존재하는 펫 이름입니다. 다른 이름을 사용해주세요.",
+      });
+    }
+
+    // 2. 펫 보유 중복 체크
     const checkQuery = "SELECT id FROM pets WHERE user_id = $1";
     const checkResult = await pool.query(checkQuery, [userId]);
     if (checkResult.rows.length > 0) {
@@ -845,7 +854,7 @@ const getAutoComment = async (req, res) => {
 
 // 펫 교배 (자식 펫 탄생)
 const breedPets = async (req, res) => {
-  const { parent1Name, parent2Name } = req.body;
+  const { parent1Name, parent2Name, roomId } = req.body;
   if (!parent1Name || !parent2Name) {
     return res.status(400).json({ message: "부모 펫 이름이 필요합니다." });
   }
@@ -918,8 +927,12 @@ const breedPets = async (req, res) => {
       hand: Math.random() > 0.5 ? p1.hand : p2.hand, // 유전
     };
 
+    const allowedColors = ["blue", "green", "pink", "purple", "red", "yellow"];
+    const randomColor =
+      allowedColors[Math.floor(Math.random() * allowedColors.length)];
+
     const childName = `${p1.name}와(과) ${p2.name}의 알`;
-    const childColor = p1.color; // 임시색상 복사
+    const childColor = randomColor; // 지정된 6개 색상 중 하나 사용
 
     // 💡 user_id가 NULL인 자식 펫 INSERT
     const insertQuery = `
@@ -975,6 +988,11 @@ const breedPets = async (req, res) => {
       "UPDATE pets SET spouse_id = $1, child_id = $2 WHERE id = $3",
       [p1.id, childPet.id, p2.id],
     );
+
+    // 방이 존재하면 삭제 (교배 성공시 데이트 방 폭파)
+    if (roomId) {
+      await client.query("DELETE FROM dating_rooms WHERE id = $1", [roomId]);
+    }
 
     await client.query("COMMIT");
 
@@ -1097,13 +1115,15 @@ const hatchPet = async (req, res) => {
       shapeScore[a] > shapeScore[b] ? a : b,
     );
 
-    // 색상(color): 지식(blue), 호기심(orange), 애정(rose), 이타심(emerald)
+    // 색상(color): 지식(blue), 호기심(yellow), 애정(pink), 이타심(green), 논리(red), 유머(purple)
     let color = "blue";
     const colorScore = {
       blue: stats.knowledge || 0,
-      orange: stats.curiosity || 0,
-      rose: stats.affection || 0,
-      emerald: stats.altruism || 0,
+      yellow: stats.curiosity || 0,
+      pink: stats.affection || 0,
+      green: stats.altruism || 0,
+      red: stats.logic || 0,
+      purple: stats.humor || 0,
     };
     color = Object.keys(colorScore).reduce((a, b) =>
       colorScore[a] > colorScore[b] ? a : b,
@@ -1241,6 +1261,55 @@ const renamePet = async (req, res) => {
   }
 };
 
+// 펫 파양하기 API (자식 펫 삭제 및 부모 펫 관계 초기화)
+const abandonPet = async (req, res) => {
+  const { childId } = req.params;
+  const client = await pool.connect();
+
+  if (!childId) {
+    return res
+      .status(400)
+      .json({ message: "파양할 자식 펫의 아이디가 필요합니다." });
+  }
+
+  try {
+    await client.query("BEGIN");
+
+    // 1. 부모 펫 관계 초기화
+    // childId를 갖고 있는 부모 펫들의 spouse_id와 child_id를 null로 만듭니다.
+    await client.query(
+      "UPDATE pets SET spouse_id = NULL, child_id = NULL WHERE child_id = $1",
+      [childId],
+    );
+
+    // 2. 자식 펫 데이터 삭제
+    const deleteResult = await client.query(
+      "DELETE FROM pets WHERE id = $1 RETURNING *",
+      [childId],
+    );
+
+    if (deleteResult.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "선택한 펫을 찾을 수 없습니다." });
+    }
+
+    await client.query("COMMIT");
+
+    return res.status(200).json({
+      message: "파양이 완료되었습니다. (관계 초기화 및 데이터 삭제 완료)",
+      deletedPet: deleteResult.rows[0],
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("abandonPet error:", error);
+    return res
+      .status(500)
+      .json({ message: "파양 처리 중 서버 에러가 발생했습니다." });
+  } finally {
+    client.release();
+  }
+};
+
 module.exports = {
   getMyPet,
   createPet,
@@ -1255,4 +1324,5 @@ module.exports = {
   performChildAction,
   hatchPet,
   renamePet,
+  abandonPet,
 };
