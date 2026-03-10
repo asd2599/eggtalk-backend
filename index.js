@@ -311,6 +311,56 @@ io.on("connection", (socket) => {
     }
   });
 
+  // 자식 펫 작별(파양) 요청
+  socket.on("child_pet_farewell_request", ({ childId, requesterName }) => {
+    const roomName = `child_room_${childId}`;
+    // 배우자에게만 제안 알림 전송
+    socket.to(roomName).emit("child_pet_farewell_proposed", { requesterName });
+  });
+
+  // 작별 응답 (동의/거절)
+  socket.on("child_pet_farewell_response", async ({ childId, approved }) => {
+    const roomName = `child_room_${childId}`;
+    if (approved) {
+      // 승인 시 방 전체에 작별 확정 알림
+      // 실제 DB 삭제(abandonPet)는 클라이언트 중 한쪽에서 API를 호출하도록 구현
+      io.in(roomName).emit("child_pet_farewell_approved");
+    } else {
+      // 거절 시 제안자에게 거절 알림
+      socket.to(roomName).emit("child_pet_farewell_rejected");
+    }
+  });
+
+  // 자식 펫 액션(밥, 씻기, 놀이) 페이지 이동 요청
+  socket.on(
+    "child_action_request",
+    ({ childId, actionType, requesterName }) => {
+      const roomName = `child_room_${childId}`;
+      // 배우자에게만 제안 알림 전송
+      socket
+        .to(roomName)
+        .emit("child_action_proposed", { actionType, requesterName });
+    },
+  );
+
+  // 액션 페이지 이동 응답 (동의/거절)
+  socket.on("child_action_response", ({ childId, approved, actionType }) => {
+    const roomName = `child_room_${childId}`;
+    if (approved) {
+      // 승인 시 방 전체에 강제 이동 알림 (sync)
+      io.in(roomName).emit("child_action_sync", { actionType });
+    } else {
+      // 거절 시 제안자에게 거절 알림
+      socket.to(roomName).emit("child_action_rejected", { actionType });
+    }
+  });
+
+  // 액션 페이지 활동 완료 (양측 동시 복귀 유도)
+  socket.on("child_action_finish", ({ childId }) => {
+    const roomName = `child_room_${childId}`;
+    io.in(roomName).emit("child_action_finished");
+  });
+
   // 순수 소켓 접속 종료 (창 닫힘 등)
   socket.on("disconnect", async () => {
     // 💡 1. 채팅방 비정상 종료 대응 (DB 퇴장 처리)
