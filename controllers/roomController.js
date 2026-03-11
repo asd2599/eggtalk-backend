@@ -52,6 +52,12 @@ exports.createRoom = async (req, res) => {
     const result = await pool.query(query, [roomName, petName]);
     const roomId = result.rows[0].id;
 
+    // 생성된 후 모든 클라이언트(로비 포함)에 목록 갱신을 알림
+    const io = req.app.get("io");
+    if (io) {
+      io.emit("rooms_updated");
+    }
+
     res.json({ success: true, roomId });
   } catch (err) {
     console.error("createRoom 에러:", err);
@@ -114,6 +120,12 @@ exports.joinRoom = async (req, res) => {
       WHERE id = $2
     `;
     await pool.query(updateQuery, [petName, roomId]);
+
+    // 방 상태 변화 시 모든 클라이언트(로비)에 목록 갱신 알림
+    const io = req.app.get("io");
+    if (io) {
+      io.emit("rooms_updated");
+    }
 
     res.json({ success: true, roomId });
   } catch (err) {
@@ -232,6 +244,19 @@ exports.leaveRoom = async (req, res) => {
         const deleteQuery = `DELETE FROM dating_rooms WHERE id = $1`;
         await pool.query(deleteQuery, [roomId]);
       }
+    }
+
+    // 퇴장/방 폭파 후 모든 클라이언트(로비 포함)에 목록 갱신을 알림
+    const io = req.app.get("io");
+    if (io) {
+      // 퇴장 메시지 먼저 남은 사람에게 쏘기
+      io.to(roomId).emit("receive_dating_message", {
+        sender: "System",
+        message: `${petName}님이 방을 나갔습니다.`,
+        isSystem: true,
+      });
+      // 이후 전체 로비 갱신
+      io.emit("rooms_updated");
     }
 
     res.json({ success: true, message: "정상적으로 퇴장했습니다." });
