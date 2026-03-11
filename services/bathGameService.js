@@ -118,32 +118,68 @@ const bathGameService = {
    * 게임 종료 시 결과를 평가하고 보상 및 스토리를 반환합니다.
    * @param {boolean} isCorrect - 정답 맞힘 여부
    * @param {number} turnCount - 소요된 턴 수 (최대 20)
-   * @returns {Promise<{story: string, score: number}>} 결과
+   * @param {string} targetWord - 정답 단어
+   * @param {Array} questions - 오간 질문과 답변 배열 [{question, answer}]
+   * @returns {Promise<{isSuccess: boolean, score: number, story: string, changes: object}>} 결과
    */
-  evaluateResult: (isCorrect, turnCount) => {
+  evaluateResult: async (isCorrect, turnCount, targetWord, questions) => {
     if (!isCorrect) {
       return {
+        isSuccess: false,
         score: 30,
         story:
-          "아쉽게도 정답을 맞히지 못했어. 그래도 깨끗하게 씻고 스무고개 하니까 정말 즐거웠어요! 🐾",
+          "아쉽게도 정답을 맞히지 못했어. 그래도 궁금하게 물어봐줘서 엄청 재밌었어! 🐾",
+        changes: { cleanliness: 30, affection: -5, knowledge: 0, exp: 10 },
       };
     }
 
-    // 턴수가 적을수록 높은 점수 (최대 100, 최소 50)
-    const score = Math.max(50, 100 - (turnCount - 1) * 2.5);
-    let story = "";
-    if (turnCount <= 5) {
-      story =
-        "우와! 엄청 빨리 맞히셨네요! 천재 부모님이랑 씻으니까 너무 좋아요 ✨";
-    } else if (turnCount <= 15) {
-      story =
-        "호흡이 척척 맞네요! 재밌게 대화하다 보니까 어느새 다 씻었어요 🛁";
-    } else {
-      story =
-        "휴, 겨우 맞혔네요! 몽글이는 오늘 부모님과 스무고개 해서 너무 행복했어요 🫧";
-    }
+    try {
+      // 질문 로그 문자열화
+      const logText = (questions || [])
+        .map((q, i) => `Q${i + 1}: ${q.question} -> A: ${q.answer}`)
+        .join("\n");
+      const prompt = `너는 귀여운 아기 펫 '몽글이'야. 부모님과 목욕하면서 스무고개 놀이를 했어.
+정답 단어는 "${targetWord}"였고, 부모님은 총 ${turnCount}번의 시도(질문+정답 말하기) 만에 방금 정답을 정확히 맞췄어!
+지금까지 오간 질문과 대답 로그는 다음과 같아:
+${logText}
 
-    return { score: Math.round(score), story };
+이 기록을 바탕으로 다음 항목들을 평가해서 JSON 형식으로만 응답해줘. (다른 말은 하지마)
+{
+  "story": "부모님에게 전달할 귀엽고 애교 있는 짤막한 리뷰와 소감 (1~2문장)",
+  "changes": {
+    "cleanliness": 100,
+    "affection": (10~30 사이의 정수. 로그가 날카롭고 턴이 짧을수록 높게),
+    "knowledge": (10~30 사이의 정수. 질문이 논리적일수록 높게),
+    "exp": (40~80 사이의 정수. 종합 퀄리티 점수)
+  }
+}`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [{ role: "system", content: prompt }],
+        response_format: { type: "json_object" },
+        max_tokens: 250,
+        temperature: 0.7,
+      });
+
+      const parsed = JSON.parse(response.choices[0].message.content);
+      return {
+        isSuccess: true,
+        score: parsed.changes.exp,
+        story: parsed.story,
+        changes: parsed.changes,
+      };
+    } catch (err) {
+      console.error("Bath Game Evaluate Error:", err);
+      // Fallback
+      return {
+        isSuccess: true,
+        score: 50,
+        story:
+          "정답이야! 똑똑한 부모님이랑 씻으니까 나도 기분이 정말 좋아져 💖",
+        changes: { cleanliness: 100, affection: 15, knowledge: 10, exp: 50 },
+      };
+    }
   },
 };
 
