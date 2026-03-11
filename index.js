@@ -75,12 +75,23 @@ const rolePlayReadyMap = new Map();
 
 // 상황극 중복 시작 방지용 Set (race condition 해결)
 const playRoomStartedSet = new Set();
+const feedRoomStartedSet = new Set(); // 🍼 추가: 분유 게임 중복 시작 방지
+const bathRoomStartedSet = new Set(); // 🛁 추가: 목욕 게임 중복 시작 방지
+
 // 상황극 방별 참가자 목록 (play_room_N -> [petId1, petId2])
 const roomParticipantsMap = new Map();
 // 턴제 라운드 관리 (play_room_N -> Map<petId, { role, name, content }>)
 const roomChatRoundMap = new Map();
 // 방별 현재 시나리오 (play_room_N -> scenario 객체)
 const roomScenarioMap = new Map();
+
+// 🍼 분유주기 협동 게임 관리 (child_room_N -> { hint, ingredients: { base, topping }, participants: [petId] })
+const feedGameMap = new Map();
+const bathGameMap = new Map(); // 🛁 목욕 게임 상태 관리 전역 Map🐾👣
+
+// feedGameService 가져오기
+const feedGameService = require("./services/feedGameService");
+const bathGameService = require("./services/bathGameService"); // 🛁 목욕 게임 서비스🐾👣
 
 io.on("connection", (socket) => {
   // 새 사용자가 연결될 때마다 로비 접속자 수 브로드캐스트
@@ -238,8 +249,20 @@ io.on("connection", (socket) => {
     });
     socket.leave(roomId);
   });
-
   // 공동육아방(ChildRoom) 입장/퇴장 관리
+  socket.on("get_room_participants", async ({ childId }, callback) => {
+    try {
+      const roomName = `child_room_${childId}`;
+      const sockets = await io.in(roomName).fetchSockets();
+      if (typeof callback === "function") {
+        callback(sockets.length);
+      }
+    } catch (err) {
+      console.error("get_room_participants error:", err);
+      if (typeof callback === "function") callback(0);
+    }
+  });
+
   socket.on("join_child_room", async ({ childId, petId, petName }) => {
     const roomName = `child_room_${childId}`;
     socket.join(roomName);
@@ -280,8 +303,18 @@ io.on("connection", (socket) => {
     // 상황극 준비 상태 제거
     cleanupRolePlayReady(childId);
 
+    // 🍼 추가: 분유 게임 데이터 클린업
+    feedGameMap.delete(roomName);
+    bathGameMap.delete(roomName); // 🛁 목욕 게임 데이터도 함께 클린업🐾👣
+
     delete socket.childRoomId;
     delete socket.childPetName;
+  });
+
+  // 🍼/🛁 공통: 미니게임 완료 후 방 전체 육아방 복귀 알림
+  socket.on("child_action_finish", ({ childId }) => {
+    const roomName = `child_room_${childId}`;
+    io.in(roomName).emit("child_action_finished");
   });
 
   // 부화 탭(클릭) 이벤트 처리
@@ -385,6 +418,13 @@ io.on("connection", (socket) => {
     io.in(roomName).emit("child_action_finished");
   });
 
+  // 특정 방의 참가자 수 반환
+  socket.on("get_room_participants", async ({ childId }, callback) => {
+    const roomName = `child_room_${childId}`;
+    const sockets = await io.in(roomName).fetchSockets();
+    if (callback) callback(sockets.length);
+  });
+
   // --- 상황극(Role-Play) 관련 소켓 로직 ---
 
   // 상황극 페이지 전용 입장 이벤트
@@ -464,19 +504,27 @@ io.on("connection", (socket) => {
   // 상황극 방 퇴장 — 상대방에게 알리고 상태 초기화
   socket.on("leave_play_room", async ({ childId, petName }) => {
     const roomName = `play_room_${childId}`;
-    // 상대방에게 퇴장 알림 후 강제 종료
-    socket
-      .to(roomName)
-      .emit("play_partner_left", { name: petName || "상대방" });
     socket.leave(roomName);
     delete socket.playRoomId;
-    const remaining = await io.in(roomName).fetchSockets();
-    if (remaining.length === 0) {
-      playRoomStartedSet.delete(roomName);
-      roomParticipantsMap.delete(roomName);
-      roomChatRoundMap.delete(roomName);
-      console.log(`[PLAY] ${roomName} fully cleared.`);
-    }
+
+    setTimeout(async () => {
+      // 500ms 지연 후 현재 룸 소켓 다시 확인 (Strict Mode 대응)
+      const sockets = await io.in(roomName).fetchSockets();
+      const isPetStillInRoom = sockets.some(
+        (s) => String(s.petId) === String(socket.petId),
+      );
+      if (!isPetStillInRoom) {
+        io.in(roomName).emit("play_partner_left", {
+          name: petName || "상대방",
+        });
+        if (sockets.length === 0) {
+          playRoomStartedSet.delete(roomName);
+          roomParticipantsMap.delete(roomName);
+          roomChatRoundMap.delete(roomName);
+          console.log(`[PLAY] ${roomName} fully cleared.`);
+        }
+      }
+    }, 500);
   });
 
   // 상황극 채팅: 1인 1회 발언 → 아기 펫 반응 → 다음 라운드
@@ -652,6 +700,335 @@ io.on("connection", (socket) => {
     }
   };
 
+  // -------------------------------------------------------------
+  // 🍼 분유주기(Feed Game) 관련 소켓 로직 (PlayRoom 방식 적용)
+  // -------------------------------------------------------------
+
+  socket.on("join_feed_room", async ({ childId, petId, petName }) => {
+    const roomName = `feed_room_${childId}`;
+    socket.petId = petId;
+    socket.feedRoomId = childId;
+    socket.join(roomName);
+
+    const sockets = await io.in(roomName).fetchSockets();
+
+    if (sockets.length < 2) {
+      socket.emit("feed_room_waiting");
+      return;
+    }
+
+    if (feedRoomStartedSet.has(roomName)) {
+      const game = feedGameMap.get(roomName);
+      if (game) {
+        // 이미 진행 중인 방이라면 새로운 소켓에 현재 상태 전송
+        socket.emit("feed_game_started", {
+          hint: game.hint,
+          baseSelectorId: game.participants[0],
+          toppingSelectorId: game.participants[1],
+        });
+        if (game.ingredients.base) {
+          socket.emit("ingredient_selected", {
+            role: "base",
+            ingredientId: game.ingredients.base,
+          });
+        }
+        if (game.ingredients.topping) {
+          socket.emit("ingredient_selected", {
+            role: "topping",
+            ingredientId: game.ingredients.topping,
+          });
+        }
+      }
+      return;
+    }
+    feedRoomStartedSet.add(roomName);
+
+    try {
+      // 둘 다 모였으므로 게임 초기화 후 전체 브로드캐스트
+      const hint = await feedGameService.generateCookingHint();
+      // Strict Mode 재접속 시 아이디 변경 방지를 위해 petId 사용
+      const baseSelectorId = String(sockets[0].petId);
+      const toppingSelectorId = String(sockets[1].petId);
+
+      feedGameMap.set(roomName, {
+        hint,
+        ingredients: {},
+        participants: [baseSelectorId, toppingSelectorId].filter(Boolean),
+      });
+
+      io.in(roomName).emit("feed_game_started", {
+        hint,
+        baseSelectorId,
+        toppingSelectorId,
+      });
+    } catch (err) {
+      console.error("[FEED] init error:", err);
+      feedRoomStartedSet.delete(roomName);
+    }
+  });
+
+  socket.on("leave_feed_room", async ({ childId, petName }) => {
+    const roomName = `feed_room_${childId}`;
+    socket.leave(roomName);
+    delete socket.feedRoomId;
+
+    setTimeout(async () => {
+      const sockets = await io.in(roomName).fetchSockets();
+      const isPetStillInRoom = sockets.some(
+        (s) => String(s.petId) === String(socket.petId),
+      );
+      if (!isPetStillInRoom) {
+        io.in(roomName).emit("spouse_left_child_room", petName || "배우자");
+        if (sockets.length === 0) {
+          feedRoomStartedSet.delete(roomName);
+          feedGameMap.delete(roomName);
+        }
+      }
+    }, 500);
+  });
+
+  socket.on(
+    "select_ingredient",
+    async ({ childId, petId, role, ingredientId, petName }) => {
+      const roomName = `feed_room_${childId}`;
+      const game = feedGameMap.get(roomName);
+      if (!game) return;
+
+      game.ingredients[role] = ingredientId;
+
+      io.in(roomName).emit("ingredient_selected", {
+        role,
+        ingredientId,
+        petName,
+      });
+
+      // 양쪽 재료(베이스와 토핑)를 모두 선택했으면 결과 평가 진행
+      if (game.ingredients.base && game.ingredients.topping) {
+        try {
+          // 중복 평가 방지를 위해 재료를 지워두거나 진행상태 플래그 사용 가능
+          const recipe = {
+            base: game.ingredients.base,
+            topping: game.ingredients.topping,
+          };
+
+          io.in(roomName).emit("feed_game_evaluating");
+          const result = await feedGameService.evaluateCooking(
+            game.hint,
+            recipe,
+          );
+
+          const { pool } = require("./database/database");
+          const changes = {
+            hunger: 100,
+            affection: result.score > 80 ? 20 : result.score > 50 ? 10 : 5,
+            healthHp: result.score > 60 ? 10 : 0,
+            exp: Math.round(result.score * 1.5),
+          };
+
+          await pool.query(
+            `UPDATE pets SET 
+              hunger = 100, 
+              affection = LEAST(affection + $2, 100),
+              health_hp = LEAST(health_hp + $3, 100),
+              exp = exp + $4
+            WHERE id = $1`,
+            [childId, changes.affection, changes.healthHp, changes.exp],
+          );
+
+          io.in(roomName).emit("feed_game_result", { ...result, changes });
+          feedGameMap.delete(roomName);
+          feedRoomStartedSet.delete(roomName);
+        } catch (error) {
+          console.error("Feed Game Evaluate Error:", error);
+          io.in(roomName).emit("feed_game_error", {
+            message: "결과 처리 중 문제가 발생했습니다.",
+          });
+        }
+      }
+    },
+  );
+
+  // -------------------------------------------------------------
+  // 🛁 목욕시키기(Bath Game) 스무고개 관련 소켓 로직 (PlayRoom 방식 적용)
+  // -------------------------------------------------------------
+
+  socket.on("join_bath_room", async ({ childId, petId, petName }) => {
+    const roomName = `bath_room_${childId}`;
+    socket.petId = petId;
+    socket.bathRoomId = childId;
+    socket.join(roomName);
+    console.log(
+      `[BATH-DEBUG] join_bath_room: room=${roomName}, petId=${petId}, socketId=${socket.id}`,
+    );
+
+    const sockets = await io.in(roomName).fetchSockets();
+    console.log(
+      `[BATH-DEBUG] sockets in room: ${sockets.length}, startedSet has: ${bathRoomStartedSet.has(roomName)}, gameMap has: ${!!bathGameMap.get(roomName)}`,
+    );
+
+    if (bathRoomStartedSet.has(roomName)) {
+      const game = bathGameMap.get(roomName);
+      if (game && !game.isFinished) {
+        console.log(`[BATH-DEBUG] Re-sending existing game state`);
+        socket.emit("bath_game_started", {
+          hint: game.hint,
+          currentTurnPetId: game.currentTurnPetId,
+        });
+        game.questions.forEach((q) => {
+          socket.emit("bath_question_answered", q);
+        });
+      } else {
+        console.log(
+          `[BATH-DEBUG] startedSet=true but game is null/finished, waiting for init broadcast`,
+        );
+      }
+      return;
+    }
+    bathRoomStartedSet.add(roomName);
+
+    try {
+      const participantIds = sockets
+        .map((s) => (s.petId ? String(s.petId) : null))
+        .filter(Boolean);
+      console.log(
+        `[BATH-DEBUG] Initializing game... participants=${JSON.stringify(participantIds)}`,
+      );
+      const { word, hint } = await bathGameService.initializeGame();
+      console.log(
+        `[BATH-DEBUG] Game initialized! word=${word}, hint=${hint.substring(0, 30)}...`,
+      );
+
+      bathGameMap.set(roomName, {
+        word,
+        hint,
+        questions: [],
+        turnCount: 0,
+        isFinished: false,
+        participants: participantIds,
+        currentTurnPetId: participantIds[0],
+      });
+
+      const socketsNow = await io.in(roomName).fetchSockets();
+      console.log(
+        `[BATH-DEBUG] Broadcasting bath_game_started to ${socketsNow.length} sockets in room`,
+      );
+
+      io.in(roomName).emit("bath_game_started", {
+        hint,
+        currentTurnPetId: participantIds[0],
+      });
+    } catch (err) {
+      console.error("[BATH] init error:", err);
+      bathRoomStartedSet.delete(roomName);
+    }
+  });
+
+  socket.on("leave_bath_room", async ({ childId, petName }) => {
+    const roomName = `bath_room_${childId}`;
+    socket.leave(roomName);
+    delete socket.bathRoomId;
+
+    setTimeout(async () => {
+      const sockets = await io.in(roomName).fetchSockets();
+      const isPetStillInRoom = sockets.some(
+        (s) => String(s.petId) === String(socket.petId),
+      );
+      if (!isPetStillInRoom) {
+        io.in(roomName).emit("bath_partner_left", petName || "배우자");
+        bathRoomStartedSet.delete(roomName);
+        bathGameMap.delete(roomName);
+      }
+    }, 500);
+  });
+
+  socket.on(
+    "ask_bath_question",
+    async ({ childId, question, petName, petId }) => {
+      const roomName = `bath_room_${childId}`;
+      const game = bathGameMap.get(roomName);
+      if (!game || game.isFinished) return;
+
+      // 턴 체크 제거 - 혼자서도, 2인에서도 자유롭게 질문 가능
+
+      try {
+        const answer = await bathGameService.answerQuestion(
+          game.word,
+          question,
+        );
+        const questionLog = { petName, question, answer };
+        game.questions.push(questionLog);
+        game.turnCount++;
+
+        io.in(roomName).emit("bath_question_answered", questionLog);
+
+        const currentIndex = game.participants.indexOf(String(petId));
+        const nextIndex = (currentIndex + 1) % game.participants.length;
+        game.currentTurnPetId = game.participants[nextIndex];
+
+        io.in(roomName).emit("bath_turn_changed", {
+          currentTurnPetId: game.currentTurnPetId,
+        });
+
+        if (game.turnCount >= 20) {
+          game.isFinished = true;
+          const result = bathGameService.evaluateResult(false, 20);
+          io.in(roomName).emit("bath_game_result", {
+            ...result,
+            word: game.word,
+            changes: { exp: 0, affection: 0, cleanliness: 100 },
+          });
+          bathGameMap.delete(roomName);
+          bathRoomStartedSet.delete(roomName);
+        }
+      } catch (error) {
+        console.error("Bath Question Error:", error);
+      }
+    },
+  );
+
+  socket.on("guess_bath_word", async ({ childId, guess, petName }) => {
+    const roomName = `bath_room_${childId}`;
+    const game = bathGameMap.get(roomName);
+    if (!game || game.isFinished) return;
+
+    const normalizedGuess = guess.replace(/\s/g, "").toLowerCase();
+    const normalizedWord = game.word.replace(/\s/g, "").toLowerCase();
+
+    if (normalizedGuess === normalizedWord) {
+      game.isFinished = true;
+      const result = bathGameService.evaluateResult(true, game.turnCount + 1);
+      const { pool } = require("./database/database");
+
+      const t = Math.max(0, Math.min(100, result.score)) / 100;
+      const changes = {
+        cleanliness: 100,
+        affection: Math.round(5 + 15 * t),
+        intelligence: 10,
+        exp: Math.round(result.score),
+      };
+
+      await pool.query(
+        `UPDATE pets SET 
+          cleanliness = 100, 
+          affection = LEAST(affection + $2, 100),
+          knowledge = LEAST(knowledge + $3, 100),
+          exp = exp + $4
+        WHERE id = $1`,
+        [childId, changes.affection, changes.intelligence, changes.exp],
+      );
+
+      io.in(roomName).emit("bath_game_result", {
+        ...result,
+        word: game.word,
+        changes,
+      });
+      bathGameMap.delete(roomName);
+      bathRoomStartedSet.delete(roomName);
+    } else {
+      io.in(roomName).emit("bath_wrong_guess", { petName, guess });
+    }
+  });
+
   // 순수 소켓 접속 종료 (창 닫힘 등)
   socket.on("disconnect", async () => {
     // 상황극 준비 상태 제거
@@ -709,11 +1086,59 @@ io.on("connection", (socket) => {
     }
 
     // 💡 2. 공동육아방 비정상 종료 대응
-    const { childRoomId, childPetName } = socket;
+    const { childRoomId, childPetName, playRoomId, feedRoomId, bathRoomId } =
+      socket;
     if (childRoomId && childPetName) {
       const roomName = `child_room_${childRoomId}`;
       socket.to(roomName).emit("spouse_left_child_room", childPetName);
     }
+
+    // 미니게임 방 비정상 (새로고침 등) 강제 종료 시 startedSet 초기화 및 잔류 인원 알림
+    const cleanupMiniGame = async (
+      roomId,
+      namespace,
+      startedSet,
+      gameMap,
+      droppedPetName,
+    ) => {
+      if (!roomId) return;
+      const roomName = `${namespace}_${roomId}`;
+      const remaining = await io.in(roomName).fetchSockets();
+      if (remaining.length === 0) {
+        startedSet.delete(roomName);
+        if (gameMap) gameMap.delete(roomName);
+      } else {
+        // 남은 인원이 있을 경우 상대방 팅김 알림 및 방 파기
+        io.in(roomName).emit("spouse_left_child_room", droppedPetName);
+        startedSet.delete(roomName);
+        if (gameMap) gameMap.delete(roomName);
+      }
+    };
+
+    const droppedPetName =
+      socketToPetName.get(socket.id) || childPetName || "배우자";
+
+    cleanupMiniGame(
+      playRoomId,
+      "play_room",
+      playRoomStartedSet,
+      roomParticipantsMap,
+      droppedPetName,
+    );
+    cleanupMiniGame(
+      feedRoomId,
+      "feed_room",
+      feedRoomStartedSet,
+      feedGameMap,
+      droppedPetName,
+    );
+    cleanupMiniGame(
+      bathRoomId,
+      "bath_room",
+      bathRoomStartedSet,
+      bathGameMap,
+      droppedPetName,
+    );
 
     // 💡 3. 접속 종료 시 Map에서 해당 세션 정보 제거 및 온라인 유저 목록 갱신
     const petName = socketToPetName.get(socket.id);
