@@ -109,14 +109,16 @@ io.on("connection", (socket) => {
 
   // [Dating Room] - 기존 로직 유지
   socket.on("join_dating_room", async ({ roomId, petName }, callback) => {
-    socket.join(roomId);
-    socket.roomId = roomId;
-    socket.petName = petName;
-    socket.to(roomId).emit("receive_dating_message", {
-      sender: "System",
-      message: `${petName}님이 방에 들어왔습니다!`,
-      isSystem: true,
-    });
+    if (!socket.rooms.has(roomId)) {
+      socket.join(roomId);
+      socket.roomId = roomId;
+      socket.petName = petName;
+      socket.to(roomId).emit("receive_dating_message", {
+        sender: "System",
+        message: `${petName}님이 방에 들어왔습니다!`,
+        isSystem: true,
+      });
+    }
     if (callback) callback({ success: true, roomId });
   });
 
@@ -736,10 +738,20 @@ io.on("connection", (socket) => {
       socketToPetName.delete(id);
       io.emit("online_users_list", Array.from(activeUsers.keys()));
     }
+
+    if (socket.roomId && socket.petName) {
+      socket.to(socket.roomId).emit("receive_dating_message", {
+        sender: "System",
+        message: `${socket.petName}님이 방을 나갔습니다.`,
+        isSystem: true,
+      });
+    }
   });
 });
 
-// 라우터 등록
+// 라우터 등록 및 io 전역변수 세팅
+app.set("io", io);
+
 app.use(require("./routes/userRoutes"));
 app.use(require("./routes/petRoutes"));
 app.use("/api", require("./routes/roomRoutes"));
