@@ -160,6 +160,53 @@ const generatePetReply = async (messages, scenario) => {
 };
 
 /* ─────────────────────────────────────────────────
+   4. 최종 보상 결정 (대화 내용 기반 능력치 분석)
+   전체 대화와 점수를 보고 OpenAI가 증감 수치를 결정
+───────────────────────────────────────────────── */
+/**
+ * @param {any[]} messages
+ * @param {number} totalScore
+ * @returns {{ knowledge: number, affection: number, exp: number, stress: number }}
+ */
+const evaluateFinalRewards = async (messages, totalScore) => {
+  const dialogue = messages
+    .map((m) => `[${m.role}] ${m.name}: "${m.content}"`)
+    .join("\n");
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      {
+        role: "system",
+        content: `너는 상황극 놀이의 교육적/정서적 가치를 분석하는 전문가야.
+두 부모와 아이의 대화 내역을 보고 아래 능력치의 변화량을 결정해줘.
+
+분석 결과는 반드시 아래 JSON 형식으로만 응답해:
+{
+  "knowledge": 0~20 사이 정수 (지식 습득이나 새로운 정보가 많을 때 높음),
+  "affection": 0~20 사이 정수 (애정 표현이나 따뜻한 교감이 많을 때 높음),
+  "exp": 10~50 사이 정수 (전체적인 대화 완성도와 비례),
+  "stress": -10~10 사이 정수 (게임이 즐거웠다면 음수, 갈등이나 훈육이 있었다면 양수)
+}
+
+총점: ${totalScore}점
+평가할 대화:
+${dialogue}`,
+      },
+    ],
+    response_format: { type: "json_object" },
+  });
+
+  const rewards = JSON.parse(response.choices[0].message.content);
+  return {
+    knowledge: Math.max(0, parseInt(rewards.knowledge) || 0),
+    affection: Math.max(0, parseInt(rewards.affection) || 0),
+    exp: Math.max(10, parseInt(rewards.exp) || 10),
+    stress: parseInt(rewards.stress) || 0,
+  };
+};
+
+/* ─────────────────────────────────────────────────
    하위 호환용 더미 함수 (index.js의 findScenarioById 참조 대비)
 ───────────────────────────────────────────────── */
 const findScenarioById = (id) => null; // 더 이상 고정 목록 없음 → null 반환
@@ -169,6 +216,7 @@ module.exports = {
   generateRolePlay,
   scoreChat,
   generatePetReply,
+  evaluateFinalRewards,
   findScenarioById,
   getRandomScenario,
 };

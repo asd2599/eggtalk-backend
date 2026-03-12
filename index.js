@@ -9,6 +9,7 @@ const {
   generateRolePlay,
   scoreChat,
   generatePetReply,
+  evaluateFinalRewards,
 } = require("./services/rolePlayService");
 const feedGameService = require("./services/feedGameService");
 const bathGameService = require("./services/bathGameService");
@@ -184,6 +185,13 @@ io.on("connection", (socket) => {
   });
 
   // 부화(Hatch) & 액션 제안 로직
+  socket.on("hatch_start_request", ({ childId }) => {
+    const roomName = `child_room_${childId}`;
+    hatchProgressMap.set(roomName, 0);
+    // 모든 참여자에게 부화 시작 알림 (기본 15초)
+    io.in(roomName).emit("hatch_started", { duration: 15 });
+  });
+
   socket.on("hatch_tap", ({ childId }) => {
     const roomName = `child_room_${childId}`;
     let progress = Math.min((hatchProgressMap.get(roomName) || 0) + 2, 100);
@@ -206,10 +214,42 @@ io.on("connection", (socket) => {
     else socket.to(roomName).emit("child_action_rejected", { actionType });
   });
 
+  // 자식 펫 작별(파양) 제안
+  socket.on("child_pet_farewell_request", ({ childId, requesterName }) => {
+    socket
+      .to(`child_room_${childId}`)
+      .emit("child_pet_farewell_proposed", { requesterName });
+  });
+
+  socket.on("child_pet_farewell_response", ({ childId, approved }) => {
+    const roomName = `child_room_${childId}`;
+    if (approved) io.in(roomName).emit("child_pet_farewell_approved");
+    else socket.to(roomName).emit("child_pet_farewell_rejected");
+  });
+
+  // 자식 펫 이름 변경 제안
+  socket.on(
+    "child_pet_rename_request",
+    ({ childId, newName, requesterName }) => {
+      socket
+        .to(`child_room_${childId}`)
+        .emit("child_pet_rename_proposed", { newName, requesterName });
+    },
+  );
+
+  socket.on("child_pet_rename_response", ({ childId, approved, newName }) => {
+    const roomName = `child_room_${childId}`;
+    if (approved)
+      io.in(roomName).emit("child_pet_rename_approved", { newName });
+    else socket.to(roomName).emit("child_pet_rename_rejected");
+  });
+
   // [Role-Play Room]
   socket.on("join_play_room", async ({ childId, petId, petName }) => {
     const roomName = `play_room_${childId}`;
     socket.petId = petId;
+    if (!socket.data) socket.data = {};
+    socket.data.petId = petId;
     socket.playRoomId = childId;
     socket.join(roomName);
 
@@ -227,9 +267,15 @@ io.on("connection", (socket) => {
       if (scenario) {
         socket.emit("role_play_started", {
           scenario,
-          roles: {}, // 재접속 시 역할은 프론트엔드가 이전 상태를 가지거나 서버의 별도 맵을 참조(간단히 유지)
+          roles: {},
         });
       }
+      return;
+    }
+
+    // 2인 참여 시에만 게임 시작
+    if (uniquePetIds.length < 2) {
+      socket.emit("play_room_waiting");
       return;
     }
 
@@ -264,7 +310,11 @@ io.on("connection", (socket) => {
     async ({ childId, senderId, senderName, content, role }) => {
       const roomName = `play_room_${childId}`;
       const round = roomChatRoundMap.get(roomName);
-      if (!round || round.has(String(senderId))) return;
+      if (!round) return;
+      if (round.has(String(senderId))) {
+        socket.emit("play_already_spoke");
+        return;
+      }
 
       round.set(String(senderId), { role, name: senderName, content });
       io.in(roomName).emit("role_play_message", {
@@ -274,8 +324,23 @@ io.on("connection", (socket) => {
         role,
         timestamp: new Date(),
       });
+      socket.emit("play_waiting_other");
+
+      // AI 채점 추가 (점수 분석 기능을 통해 재미와 맥락 평가)
+      try {
+        const score = await scoreChat(
+          content,
+          role,
+          senderName,
+          roomScenarioMap.get(roomName),
+        );
+        io.in(roomName).emit("play_round_score", { score });
+      } catch (err) {
+        console.error("[PLAY] Scoring Error:", err);
+      }
 
       const participants = roomParticipantsMap.get(roomName) || [];
+      // 정석 2인 플레이: 두 부모가 모두 말해야만 아기 펫이 답변 생성
       if (
         participants.length >= 2 &&
         participants.every((pid) => round.has(pid))
@@ -324,6 +389,52 @@ io.on("connection", (socket) => {
         roomScenarioMap.delete(roomName);
       }
     }, 500);
+  });
+
+  socket.on("finish_play_room", async ({ childId }) => {
+    const roomName = `play_room_${childId}`;
+    const round = roomChatRoundMap.get(roomName);
+    const scenario = roomScenarioMap.get(roomName);
+
+    try {
+      // 그동안 쌓인 모든 대화 내역 수집 (DB에 기록할 수도 있으나 여기서는 총점 기반 보상 위주)
+      // 현재는 마지막 라운드 데이터(round)가 있을 수 있으므로 포함 검토 가능
+      const roundMessages = Array.from(round?.values() || []);
+
+      // AI 기반 최종 보상 결정 (대화 + 점수 분석)
+      // totalScore는 프론트엔드에서 관리하는 누적 점수를 넘겨받거나 서버에서 관리 가능
+      // 여기서는 예시로 100점을 기본값으로 하되, 실제 연동 시 누적 점수 반영 권장
+      const rewards = await evaluateFinalRewards(roundMessages, 100);
+
+      const { pool } = require("./database/database");
+      await pool.query(
+        `UPDATE pets SET 
+          knowledge = LEAST(knowledge + $2, 100),
+          affection = LEAST(affection + $3, 100),
+          exp = exp + $4,
+          stress = GREATEST(0, LEAST(stress + $5, 100))
+         WHERE id = $1`,
+        [
+          childId,
+          rewards.knowledge,
+          rewards.affection,
+          rewards.exp,
+          rewards.stress,
+        ],
+      );
+
+      io.to(roomName).emit("play_game_finished", {
+        totalScore: 100,
+        statChanges: rewards,
+      });
+    } catch (err) {
+      console.error("[PLAY] AI Reward Finish Error:", err);
+    }
+
+    playRoomStartedSet.delete(roomName);
+    roomParticipantsMap.delete(roomName);
+    roomChatRoundMap.delete(roomName);
+    roomScenarioMap.delete(roomName);
   });
 
   // [Feed Game Room]
