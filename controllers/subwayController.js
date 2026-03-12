@@ -224,6 +224,12 @@ exports.searchComplexPath = async (req, res) => {
     res.json({ result: { path: pathData.map((p) => p.raw) } });
   } catch (error) {
     console.error('ODsay Search Error:', error.message);
+    
+    // //* [Added Code] Token Bucket Rate Limiter에 의해 차단된 경우 명시적 429 반환
+    if (error.status === 429) {
+      return res.status(429).json({ error: error.message });
+    }
+
     // //* [Fixed] 실제 ODsay 에러 메시지를 그대로 전달 (generic 메시지 제거)
     res.status(500).json({ error: error.message || 'ODsay 경로 탐색 실패' });
   }
@@ -231,25 +237,20 @@ exports.searchComplexPath = async (req, res) => {
 
 /**
  * //* [Modified Code] ODsay 기반 역 검색 — 자동완성용으로 전체 결과 반환
- * 기존: odsayService.searchStation() → 1개 반환
- * 변경: ODsay searchStation API 직접 호출 → 지하철역 전체 목록 반환
+ * 기존: axios 직접 호출 (Rate Limit 누락)
+ * 변경: Token Bucket이 적용된 odsayService.getRaw 호출로 변경
  */
 exports.searchStation = async (req, res) => {
   const { stationName } = req.query;
   if (!stationName) return res.status(400).json({ error: 'Station name is required' });
   try {
-    const apiKey = process.env.ODSAY_API_KEY;
-    const frontendOrigin = process.env.FRONTEND_URL || 'http://localhost:5173';
-    const query = new URLSearchParams({
+    const response = await odsayService.getRaw('searchStation', {
       lang: 0,
       stationName,
       CID: 1000,
-      apiKey,
-    }).toString();
-    const response = await axios.get(
-      `https://api.odsay.com/v1/api/searchStation?${query}`,
-      { headers: { Origin: frontendOrigin, Referer: `${frontendOrigin}/ms` } },
-    );
+    });
+    
+    // axios의 경우 data에 들어있으므로
     const stations = response.data?.result?.station || [];
     // 지하철역(stationClass===2) 우선, 없으면 전체 반환
     const subwayStations = stations.filter((s) => s.stationClass === 2);
@@ -257,6 +258,9 @@ exports.searchStation = async (req, res) => {
     res.json({ result: { station: result } });
   } catch (error) {
     console.error('[searchStation]', error.message);
+    if (error.status === 429) {
+      return res.status(429).json({ error: error.message });
+    }
     res.status(500).json({ error: 'Station search failed' });
   }
 };
@@ -277,22 +281,22 @@ exports.searchPOI = async (req, res) => {
 
 /**
  * //* [NEW] [Modified Code] ODsay 기반 상세 선로 데이터(loadLane) 조회
+ * 기존: axios 직접 호출
+ * 변경: Token Bucket이 적용된 odsayService.getRaw 호출
  */
 exports.getLoadLane = async (req, res) => {
   const { mapObject } = req.query;
   if (!mapObject) return res.status(400).json({ error: 'mapObject is required' });
   try {
-    const apiKey = process.env.ODSAY_API_KEY;
-    const frontendOrigin = process.env.FRONTEND_URL || 'http://localhost:5173';
     const fullMapObject = `0:0@${mapObject}`;
-    // URLSearchParams로 apiKey 인코딩, Origin 헤더로 도메인 인증
-    const query = new URLSearchParams({ mapObject: fullMapObject, apiKey }).toString();
-    const response = await axios.get(`https://api.odsay.com/v1/api/loadLane?${query}`, {
-      headers: { Origin: frontendOrigin, Referer: `${frontendOrigin}/ms` },
-    });
+    const response = await odsayService.getRaw('loadLane', { mapObject: fullMapObject });
+    
     if (response.data?.result) return res.json(response.data);
     res.json({ result: response.data });
   } catch (error) {
+    if (error.status === 429) {
+      return res.status(429).json({ error: error.message });
+    }
     res.status(500).json({ error: 'Load lane failed' });
   }
 };
