@@ -13,23 +13,77 @@ const API_KEY = process.env.ODSAY_API_KEY;
 const BASE_URL = 'https://api.odsay.com/v1/api';
 const FRONTEND_ORIGIN = process.env.FRONTEND_URL || 'http://localhost:5173';
 
-// API 호출 오남용 방지용 캐시 (과금 방지)
+// API 호출 오남용 방지용 캐시 (광클 방지 등 짧은 간격 차단용)
 const requestCache = new Map();
+
+// //* [Added Code] 하루 1,000건 한도를 아끼기 위한 24시간 장기 캐시 (동일 검색어/좌표 재요청 시 API 통신 생략)
+const responseCache = new Map();
+const RESPONSE_CACHE_TTL = 24 * 60 * 60 * 1000; // 24시간
+
+// //* [Added Code] Token Bucket 기반의 정교한 Rate Limiter
+// 하루 제한 1000회 기준 -> 24시간 -> 1440분 -> 1분에 약 0.694회 (1분에 1번 꼴로도 부족)
+// 이에 따라 버킷(Bucket)의 최대용량은 1000, 1시간에 약 41개씩 찬다고 계산
+const BUCKET_CAPACITY = 1000;
+const REFILL_RATE_PER_MINUTE = 1000 / (24 * 60); // 분당 0.694 토큰
+let tokens = BUCKET_CAPACITY; // 최초 기동 시 가득 찬 상태
+let lastRefill = Date.now();
+
+// 토큰 리필 로직
+const refillTokens = () => {
+  const now = Date.now();
+  const minutesPassed = (now - lastRefill) / (1000 * 60);
+  if (minutesPassed > 0) {
+    const tokensToAdd = minutesPassed * REFILL_RATE_PER_MINUTE;
+    tokens = Math.min(BUCKET_CAPACITY, tokens + tokensToAdd);
+    lastRefill = now;
+  }
+};
 
 /**
  * ODsay API 호출 공통 헬퍼
  * - URLSearchParams로 apiKey 포함 (특수문자 안전 인코딩)
  * - Origin/Referer 헤더 포함 (도메인 기반 인증)
+ * - //* [Modified Code] Response Caching & Token Bucket 알고리즘 적용
  */
-const odsayGet = (endpoint, params) => {
+const odsayGet = async (endpoint, params) => {
   if (!API_KEY) throw new Error('ODSAY_API_KEY 환경변수가 설정되지 않았습니다.');
+  
   const query = new URLSearchParams({ ...params, apiKey: API_KEY }).toString();
-  return axios.get(`${BASE_URL}/${endpoint}?${query}`, {
+  const cacheKey = `${endpoint}_${JSON.stringify(params)}`;
+
+  // 1. 캐시 확인 (Response Caching)
+  const cachedData = responseCache.get(cacheKey);
+  if (cachedData && Date.now() - cachedData.timestamp < RESPONSE_CACHE_TTL) {
+    console.log(`[ODsay Cache Hit] ${endpoint} -> API 통신 생략`);
+    return { data: cachedData.data };
+  }
+
+  // 2. Token Bucket 확인 (Rate Limiting)
+  refillTokens();
+  if (tokens < 1) {
+    console.warn(`[ODsay Rate Limit] 토큰 부족으로 API 호출 차단 (현재 토큰: ${tokens.toFixed(2)})`);
+    const error = new Error('ODsay API 호출 한도를 초과했습니다. 잠시 후 갱신됩니다.');
+    error.status = 429;
+    throw error;
+  }
+
+  // 3. 토큰 지불 및 외부 API 진짜 호출
+  tokens -= 1;
+  console.log(`[ODsay API Call] ${endpoint} -> 버킷 잔량: ${tokens.toFixed(2)}`);
+
+  const response = await axios.get(`${BASE_URL}/${endpoint}?${query}`, {
     headers: {
       Origin: FRONTEND_ORIGIN,
       Referer: `${FRONTEND_ORIGIN}/ms`,
     },
   });
+
+  // 4. 요청 성공 시 메모리에 저장 (캐싱)
+  if (response.data && !response.data.error) {
+    responseCache.set(cacheKey, { timestamp: Date.now(), data: response.data });
+  }
+
+  return response;
 };
 
 const odsayService = {
@@ -157,6 +211,11 @@ const odsayService = {
       return [];
     }
   },
+
+  // //* [Added Code] 컨트롤러 등에서 odsayGet(Token Bucket 포함)을 직접 쓰기 위한 Helper
+  async getRaw(endpoint, params) {
+    return odsayGet(endpoint, params);
+  }
 };
 
 module.exports = odsayService;
