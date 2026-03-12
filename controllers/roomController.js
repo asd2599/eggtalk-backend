@@ -218,7 +218,7 @@ exports.leaveRoom = async (req, res) => {
     // 1. 방장(creator)이 나가는 경우
     if (room.creator_pet_name === petName) {
       if (room.participant_pet_name) {
-        // 참가자 승급
+        // 참가자가 있으면 참가자를 방장으로 승급
         const updateQuery = `
           UPDATE dating_rooms
           SET creator_pet_name = $1, participant_pet_name = NULL, status = 'waiting', updated_at = NOW()
@@ -226,23 +226,24 @@ exports.leaveRoom = async (req, res) => {
         `;
         await pool.query(updateQuery, [room.participant_pet_name, roomId]);
       } else {
-        // 마지막 인원이라도 삭제하지 않고 waiting 상태로 유지 (404 방지)
-        const updateQuery = `
-          UPDATE dating_rooms
-          SET creator_pet_name = NULL, status = 'waiting', updated_at = NOW()
-          WHERE id = $1
-        `;
-        await pool.query(updateQuery, [roomId]);
+        // 혼자 있었다면 방 삭제 (500 에러 방지 및 정리)
+        await pool.query(`DELETE FROM dating_rooms WHERE id = $1`, [roomId]);
       }
     }
     // 2. 참가자(participant)가 나가는 경우
     else if (room.participant_pet_name === petName) {
-      const updateQuery = `
-        UPDATE dating_rooms
-        SET participant_pet_name = NULL, status = 'waiting', updated_at = NOW()
-        WHERE id = $1
-      `;
-      await pool.query(updateQuery, [roomId]);
+      if (room.creator_pet_name) {
+        // 방장이 남아있으면 방을 대기 상태로 변경
+        const updateQuery = `
+          UPDATE dating_rooms
+          SET participant_pet_name = NULL, status = 'waiting', updated_at = NOW()
+          WHERE id = $1
+        `;
+        await pool.query(updateQuery, [roomId]);
+      } else {
+        // 혹시 모르니 방장이 없는 경우라면 삭제
+        await pool.query(`DELETE FROM dating_rooms WHERE id = $1`, [roomId]);
+      }
     }
 
     // 퇴장/방 폭파 후 모든 클라이언트(로비 포함)에 목록 갱신을 알림
