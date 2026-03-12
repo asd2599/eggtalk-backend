@@ -9,7 +9,8 @@ const createDatingRoomsTable = async () => {
       creator_pet_name VARCHAR(50) NOT NULL,
       participant_pet_name VARCHAR(50),
       status VARCHAR(20) DEFAULT 'waiting' CHECK (status IN ('waiting', 'active', 'closed')),
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `;
 
