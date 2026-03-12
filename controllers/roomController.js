@@ -3,11 +3,10 @@ const { pool } = require("../database/database");
 // 전체 활성화/대기 중인 방 목록 조회 (Lounge)
 exports.getRooms = async (req, res) => {
   try {
-    // 1. 오래된 유령 방(대기상태 30분 이상) 및 상태 무관하게 3시간 이상 경과된 방 자동 청소
+    // 1. 오래된 휴면 방(마지막 활동 1시간 이상 경과) 자동 청소
     await pool.query(`
       DELETE FROM dating_rooms 
-      WHERE (status = 'waiting' AND created_at < NOW() - INTERVAL '30 minutes')
-         OR (created_at < NOW() - INTERVAL '3 hours')
+      WHERE updated_at < NOW() - INTERVAL '1 hour'
     `);
 
     // 2. 남은 방 목록 조회
@@ -116,7 +115,7 @@ exports.joinRoom = async (req, res) => {
     // 2. 방 입장 처리 (participant 업데이트 및 상태 변경)
     const updateQuery = `
       UPDATE dating_rooms 
-      SET participant_pet_name = $1, status = 'active'
+      SET participant_pet_name = $1, status = 'active', updated_at = NOW()
       WHERE id = $2
     `;
     await pool.query(updateQuery, [petName, roomId]);
@@ -219,30 +218,31 @@ exports.leaveRoom = async (req, res) => {
     // 1. 방장(creator)이 나가는 경우
     if (room.creator_pet_name === petName) {
       if (room.participant_pet_name) {
-        // 참가자 승급
+        // 참가자가 있으면 참가자를 방장으로 승급
         const updateQuery = `
           UPDATE dating_rooms
-          SET creator_pet_name = $1, participant_pet_name = NULL, status = 'waiting'
+          SET creator_pet_name = $1, participant_pet_name = NULL, status = 'waiting', updated_at = NOW()
           WHERE id = $2
         `;
         await pool.query(updateQuery, [room.participant_pet_name, roomId]);
       } else {
-        const deleteQuery = `DELETE FROM dating_rooms WHERE id = $1`;
-        await pool.query(deleteQuery, [roomId]);
+        // 혼자 있었다면 방 삭제 (500 에러 방지 및 정리)
+        await pool.query(`DELETE FROM dating_rooms WHERE id = $1`, [roomId]);
       }
     }
     // 2. 참가자(participant)가 나가는 경우
     else if (room.participant_pet_name === petName) {
       if (room.creator_pet_name) {
+        // 방장이 남아있으면 방을 대기 상태로 변경
         const updateQuery = `
           UPDATE dating_rooms
-          SET participant_pet_name = NULL, status = 'waiting'
+          SET participant_pet_name = NULL, status = 'waiting', updated_at = NOW()
           WHERE id = $1
         `;
         await pool.query(updateQuery, [roomId]);
       } else {
-        const deleteQuery = `DELETE FROM dating_rooms WHERE id = $1`;
-        await pool.query(deleteQuery, [roomId]);
+        // 혹시 모르니 방장이 없는 경우라면 삭제
+        await pool.query(`DELETE FROM dating_rooms WHERE id = $1`, [roomId]);
       }
     }
 
