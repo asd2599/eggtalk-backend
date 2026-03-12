@@ -4,7 +4,7 @@ const {
   generatePetReply,
   evaluateFinalRewards,
 } = require("../services/rolePlayService");
-const feedGameService = require("../services/feedGameService");
+const dreamGameService = require("../services/dreamGameService");
 const bathGameService = require("../services/bathGameService");
 
 module.exports = (io, socket, state) => {
@@ -13,8 +13,8 @@ module.exports = (io, socket, state) => {
     roomParticipantsMap,
     roomChatRoundMap,
     roomScenarioMap,
-    feedRoomStartedSet,
-    feedGameMap,
+    dreamRoomStartedSet,
+    dreamGameMap,
     bathRoomStartedSet,
     bathGameMap,
   } = state;
@@ -189,131 +189,132 @@ module.exports = (io, socket, state) => {
     roomScenarioMap.delete(roomName);
   });
 
-  // [Feed Game Room]
-  socket.on("join_feed_room", async ({ childId, petId, petName }) => {
-    const roomName = `feed_room_${childId}`;
+  // [Dream Game Room] (Replacing Feed Game)
+  socket.on("join_dream_room", async ({ childId, petId, petName }) => {
+    const roomName = `dream_room_${childId}`;
     socket.petId = petId;
     if (!socket.data) socket.data = {};
     socket.data.petId = petId;
-    socket.feedRoomId = childId;
+    socket.dreamRoomId = childId;
     socket.join(roomName);
 
-    const sockets = await io.in(roomName).fetchSockets();
-    const uniquePetIds = [
-      ...new Set(
-        sockets
-          .map((s) => String(s.data?.petId))
-          .filter((id) => id && id !== "undefined"),
-      ),
-    ];
-
-    if (feedRoomStartedSet.has(roomName)) {
-      const game = feedGameMap.get(roomName);
-      if (game) {
-        if (
-          !game.participants.includes(petId) &&
-          petId &&
-          petId !== "undefined"
-        ) {
-          game.participants.push(petId);
-        }
-        const baseSelectorId = game.participants[0];
-        const toppingSelectorId =
-          game.participants.length > 1 ? game.participants[1] : null;
-        io.in(roomName).emit("feed_game_started", {
-          hint: game.hint,
-          baseSelectorId,
-          toppingSelectorId,
-        });
-        for (const [role, ingredientId] of Object.entries(game.ingredients)) {
-          socket.emit("ingredient_selected", {
-            role,
-            ingredientId,
-            petId: "재접속",
-          });
-        }
-      }
+    const normalizedPetId = String(petId || "").trim();
+    if (!normalizedPetId || normalizedPetId === "undefined" || normalizedPetId === "null") {
+      console.warn("[DREAM] Invalid petId during join:", petId);
       return;
     }
 
-    feedRoomStartedSet.add(roomName);
-    try {
-      const hint = await feedGameService.generateCookingHint();
-      const pIds = uniquePetIds;
-      const baseSelectorId = pIds[0];
-      const toppingSelectorId = pIds.length > 1 ? pIds[1] : null;
+    const sockets = await io.in(roomName).fetchSockets();
+    const activePetIds = new Set(
+      sockets
+        .map((s) => String(s.data?.petId || "").trim())
+        .filter((id) => id && id !== "undefined" && id !== "null")
+    );
+    activePetIds.add(normalizedPetId);
+    
+    const uniquePetIdsList = [...activePetIds];
+    console.log(`[DREAM] Room: ${roomName}, Participants:`, uniquePetIdsList);
 
-      feedGameMap.set(roomName, { hint, ingredients: {}, participants: pIds });
-      io.in(roomName).emit("feed_game_started", {
-        hint,
-        baseSelectorId,
-        toppingSelectorId,
+    let game = dreamGameMap.get(roomName);
+
+    if (!game) {
+      dreamRoomStartedSet.add(roomName);
+      try {
+        const hint = await dreamGameService.generateDreamHint();
+        game = { 
+          hint, 
+          choices: {}, 
+          participants: uniquePetIdsList 
+        };
+        dreamGameMap.set(roomName, game);
+        console.log(`[DREAM] New game created for ${roomName}`);
+      } catch (err) {
+        console.error("[DREAM] hint error:", err);
+        return;
+      }
+    } else {
+      uniquePetIdsList.forEach(id => {
+        if (!game.participants.includes(id)) {
+          game.participants.push(id);
+        }
       });
-    } catch (err) {
-      feedRoomStartedSet.delete(roomName);
+    }
+
+    // 역할 고정 (Array Index 0 = Architect, Index 1 = Guide)
+    const architectId = game.participants[0];
+    const guideId = game.participants.length > 1 ? game.participants[1] : null;
+
+    const rolesMap = {
+      architect: String(architectId || "").trim(),
+      guide: guideId ? String(guideId).trim() : null
+    };
+
+    io.to(roomName).emit("dream_game_started", {
+      hint: game.hint,
+      rolesMap,
+      currentChoices: game.choices,
+    });
+  });
+
+  socket.on("select_dream_element", async ({ childId, role, elementId, petName, petId }) => {
+    const roomName = `dream_room_${childId}`;
+    const game = dreamGameMap.get(roomName);
+    if (!game) return;
+
+    const normalizedPetId = String(petId || "").trim().toLowerCase();
+    game.choices[role] = elementId;
+
+    console.log(`[DREAM] ${petName} [${role}] -> ${elementId}`);
+
+    io.to(roomName).emit("dream_element_selected", {
+      role,
+      elementId,
+      petId: normalizedPetId,
+    });
+
+    if (game.choices.architect && game.choices.guide) {
+      io.to(roomName).emit("dream_evaluating");
+
+      try {
+        const result = await dreamGameService.createDreamStory(game.hint, {
+          place: game.choices.architect,
+          guide: game.choices.guide,
+        });
+
+        const changes = {
+          healthHp: result.changes?.healthHp ?? 10,
+          affection: result.changes?.affection ?? 10,
+          exp: result.changes?.exp ?? 10,
+        };
+
+        const { pool } = require("../database/database");
+        await pool.query(
+          `UPDATE pets SET health_hp = LEAST(health_hp + $2, 100), affection = LEAST(affection + $3, 100), exp = exp + $4 WHERE id = $1`,
+          [childId, changes.healthHp, changes.affection, changes.exp]
+        );
+
+        io.to(roomName).emit("dream_game_result", { ...result, changes });
+        dreamGameMap.delete(roomName);
+        dreamRoomStartedSet.delete(roomName);
+      } catch (err) {
+        console.error("[DREAM] Result error:", err);
+        io.to(roomName).emit("dream_game_error", { message: "꿈의 연결이 끊어졌어요." });
+      }
     }
   });
 
-  socket.on(
-    "select_ingredient",
-    async ({ childId, role, ingredientId, petName, petId }) => {
-      const roomName = `feed_room_${childId}`;
-      const game = feedGameMap.get(roomName);
-      if (!game) return;
-
-      game.ingredients[role] = ingredientId;
-      io.in(roomName).emit("ingredient_selected", {
-        role,
-        ingredientId,
-        petName,
-        petId,
-      });
-
-      if (game.ingredients.base && game.ingredients.topping) {
-        io.in(roomName).emit("feed_game_evaluating");
-        try {
-          const result = await feedGameService.evaluateCooking(
-            game.hint,
-            game.ingredients,
-          );
-          const changes = {
-            hunger: 100,
-            affection: result.score > 80 ? 20 : result.score > 50 ? 10 : 5,
-            healthHp: result.score > 60 ? 10 : 0,
-            exp: Math.round(result.score * 1.5),
-          };
-          const { pool } = require("../database/database");
-          await pool.query(
-            `UPDATE pets SET hunger = 100, affection = LEAST(affection + $2, 100), health_hp = LEAST(health_hp + $3, 100), exp = exp + $4 WHERE id = $1`,
-            [childId, changes.affection, changes.healthHp, changes.exp],
-          );
-          io.in(roomName).emit("feed_game_result", { ...result, changes });
-        } catch (err) {
-          console.error("[FEED] evaluate error:", err);
-          io.in(roomName).emit("feed_game_error", {
-            message: "결과 처리 중 문제가 발생했습니다.",
-          });
-        }
-        feedGameMap.delete(roomName);
-        feedRoomStartedSet.delete(roomName);
-      }
-    },
-  );
-
-  socket.on("leave_feed_room", async ({ childId, petName }) => {
-    const roomName = `feed_room_${childId}`;
+  socket.on("leave_dream_room", async ({ childId, petName }) => {
+    const roomName = `dream_room_${childId}`;
     socket.leave(roomName);
-    delete socket.feedRoomId;
+    delete socket.dreamRoomId;
 
     setTimeout(async () => {
       const sockets = await io.in(roomName).fetchSockets();
-      const isPetStillInRoom = sockets.some(
-        (s) => String(s.data?.petId) === String(socket.petId),
-      );
-      if (!isPetStillInRoom) {
-        io.in(roomName).emit("feed_partner_left", petName || "배우자");
-        feedRoomStartedSet.delete(roomName);
-        feedGameMap.delete(roomName);
+      const stillIn = sockets.some(s => String(s.data?.petId) === String(socket.petId));
+      if (!stillIn) {
+        io.to(roomName).emit("dream_partner_left", petName || "배우자");
+        dreamGameMap.delete(roomName);
+        dreamRoomStartedSet.delete(roomName);
       }
     }, 500);
   });
