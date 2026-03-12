@@ -758,6 +758,7 @@ app.use("/api", require("./routes/roomRoutes"));
 app.use("/api/friends", require("./routes/friendRoutes"));
 app.use("/api", require("./routes/subwayRoutes"));
 app.use("/api", require("./routes/busRoutes"));
+app.use("/api", require("./routes/tmapRoutes"));
 
 // 스케줄러
 setInterval(async () => {
