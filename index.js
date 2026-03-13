@@ -55,14 +55,15 @@ const hatchProgressMap = new Map();
 
 // 게임/상황극 관리
 const rolePlayReadyMap = new Map();
-const dreamRoomStartedSet = new Set();
+const playRoomStartedSet = new Set();
+const feedRoomStartedSet = new Set();
 const bathRoomStartedSet = new Set();
 
 const roomParticipantsMap = new Map();
 const roomChatRoundMap = new Map();
 const roomScenarioMap = new Map();
 
-const dreamGameMap = new Map();
+const feedGameMap = new Map();
 const bathGameMap = new Map();
 
 // --- 유틸리티 함수 ---
@@ -86,7 +87,7 @@ const cleanupMiniGame = async (
   if (!roomId) return;
   const roomName = `${namespace}_${roomId}`;
   const remaining = await io.in(roomName).fetchSockets();
-  startedSet.delete(roomName);
+  if (startedSet) startedSet.delete(roomName);
   if (gameMap) gameMap.delete(roomName);
   if (remaining.length > 0) {
     io.in(roomName).emit(leftEvent, droppedPetName);
@@ -99,12 +100,13 @@ const state = {
   socketToPetName,
   hatchProgressMap,
   rolePlayReadyMap,
-  dreamRoomStartedSet,
+  playRoomStartedSet,
+  feedRoomStartedSet,
   bathRoomStartedSet,
   roomParticipantsMap,
   roomChatRoundMap,
   roomScenarioMap,
-  dreamGameMap,
+  feedGameMap,
   bathGameMap,
 };
 
@@ -144,12 +146,12 @@ io.on("connection", (socket) => {
       droppedName,
     );
     cleanupMiniGame(
-      socket.dreamRoomId,
-      "dream_room",
-      dreamRoomStartedSet,
-      dreamGameMap,
+      feedRoomId,
+      "feed_room",
+      feedRoomStartedSet,
+      feedGameMap,
       droppedName,
-      "dream_partner_left",
+      "feed_partner_left",
     );
     cleanupMiniGame(
       bathRoomId,
