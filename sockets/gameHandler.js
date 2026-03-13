@@ -4,7 +4,7 @@ const {
   generatePetReply,
   evaluateFinalRewards,
 } = require("../services/rolePlayService");
-const dreamGameService = require("../services/dreamGameService");
+const feedGameService = require("../services/feedGameService");
 const bathGameService = require("../services/bathGameService");
 
 module.exports = (io, socket, state) => {
@@ -13,11 +13,13 @@ module.exports = (io, socket, state) => {
     roomParticipantsMap,
     roomChatRoundMap,
     roomScenarioMap,
-    dreamRoomStartedSet,
-    dreamGameMap,
+    feedRoomStartedSet,
+    feedGameMap,
     bathRoomStartedSet,
     bathGameMap,
   } = state;
+
+  const CATEGORIES = ["who", "when", "where", "what", "how", "why"];
 
   // [Role-Play Room]
   socket.on("join_play_room", async ({ childId, petId, petName }) => {
@@ -191,132 +193,143 @@ module.exports = (io, socket, state) => {
     roomScenarioMap.delete(roomName);
   });
 
-  // [Dream Game Room] (Replacing Feed Game)
-  socket.on("join_dream_room", async ({ childId, petId, petName }) => {
-    const roomName = `dream_room_${childId}`;
+  // [Feed Game Room] (5W1H Storytelling)
+  socket.on("join_feed_room", async ({ childId, petId, petName }) => {
+    const roomName = `feed_room_${childId}`;
     socket.petId = petId;
     if (!socket.data) socket.data = {};
     socket.data.petId = petId;
-    socket.dreamRoomId = childId;
+    socket.feedRoomId = childId;
     socket.join(roomName);
 
     const normalizedPetId = String(petId || "").trim();
-    if (!normalizedPetId || normalizedPetId === "undefined" || normalizedPetId === "null") {
-      console.warn("[DREAM] Invalid petId during join:", petId);
-      return;
-    }
-
     const sockets = await io.in(roomName).fetchSockets();
     const activePetIds = new Set(
       sockets
         .map((s) => String(s.data?.petId || "").trim())
-        .filter((id) => id && id !== "undefined" && id !== "null")
+        .filter((id) => id && id !== "undefined")
     );
     activePetIds.add(normalizedPetId);
     
-    const uniquePetIdsList = [...activePetIds];
-    console.log(`[DREAM] Room: ${roomName}, Participants:`, uniquePetIdsList);
-
-    let game = dreamGameMap.get(roomName);
+    const uniqueParticipants = [...activePetIds];
+    let game = feedGameMap.get(roomName);
 
     if (!game) {
-      dreamRoomStartedSet.add(roomName);
+      feedRoomStartedSet.add(roomName);
+      
+      const categories = [...CATEGORIES].sort(() => Math.random() - 0.5);
+      const assignments = {};
+      
+      // 최초 입장자에게 2개 배정
+      assignments[normalizedPetId] = [categories[0], categories[1]];
+      
+      // 나머지 4개는 일단 펫에게 배정 (배우자가 오면 2개 뺏어올 것임)
+      assignments["child_pet"] = [categories[2], categories[3], categories[4], categories[5]];
+
+      game = {
+        participants: uniqueParticipants,
+        assignments,
+        words: {},
+        petWordsGenerated: false,
+      };
+      feedGameMap.set(roomName, game);
+
+      // 아기 펫 단어 자동 생성 (4개 모두)
       try {
-        const hint = await dreamGameService.generateDreamHint();
-        game = { 
-          hint, 
-          choices: {}, 
-          participants: uniquePetIdsList 
-        };
-        dreamGameMap.set(roomName, game);
-        console.log(`[DREAM] New game created for ${roomName}`);
+        const petResult = await feedGameService.generatePetWords(assignments["child_pet"]);
+        Object.assign(game.words, petResult);
+        game.petWordsGenerated = true;
       } catch (err) {
-        console.error("[DREAM] hint error:", err);
-        return;
+        console.error("[FEED] Pet word gen error:", err);
       }
     } else {
-      uniquePetIdsList.forEach(id => {
-        if (!game.participants.includes(id)) {
-          game.participants.push(id);
-        }
-      });
+      // 이미 게임이 진행 중인데 새로운 사람이 들어온 경우 (배우자)
+      if (!game.assignments[normalizedPetId] && game.assignments["child_pet"].length > 2) {
+        // 펫의 카테고리 중 뒤의 2개를 새 참여자에게 양보
+        const petCats = game.assignments["child_pet"];
+        const movedCats = petCats.splice(-2); 
+        game.assignments[normalizedPetId] = movedCats;
+        
+        // 펫이 이미 단어를 생성했을 수 있으므로 관리 필요
+        // (단어는 그대로 두거나 새로 생성 가능하지만, 일단 참여자가 직접 입력하도록 유지)
+        movedCats.forEach(cat => delete game.words[cat]);
+        
+        console.log(`[FEED] Reassigned ${movedCats} from pet to ${normalizedPetId}`);
+      }
+      
+      if (!game.participants.includes(normalizedPetId)) {
+        game.participants.push(normalizedPetId);
+      }
     }
 
-    // 역할 고정 (Array Index 0 = Architect, Index 1 = Guide)
-    const architectId = game.participants[0];
-    const guideId = game.participants.length > 1 ? game.participants[1] : null;
-
-    const rolesMap = {
-      architect: String(architectId || "").trim(),
-      guide: guideId ? String(guideId).trim() : null
-    };
-
-    io.to(roomName).emit("dream_game_started", {
-      hint: game.hint,
-      rolesMap,
-      currentChoices: game.choices,
+    io.to(roomName).emit("feed_game_started", {
+      assignments: game.assignments,
+      currentWords: game.words,
     });
   });
 
-  socket.on("select_dream_element", async ({ childId, role, elementId, petName, petId }) => {
-    const roomName = `dream_room_${childId}`;
-    const game = dreamGameMap.get(roomName);
+  socket.on("submit_feed_word", async ({ childId, category, word, petId }) => {
+    const roomName = `feed_room_${childId}`;
+    const game = feedGameMap.get(roomName);
     if (!game) return;
 
-    const normalizedPetId = String(petId || "").trim().toLowerCase();
-    game.choices[role] = elementId;
+    game.words[category] = word;
+    io.to(roomName).emit("feed_word_submitted", { category, word, petId });
 
-    console.log(`[DREAM] ${petName} [${role}] -> ${elementId}`);
-
-    io.to(roomName).emit("dream_element_selected", {
-      role,
-      elementId,
-      petId: normalizedPetId,
-    });
-
-    if (game.choices.architect && game.choices.guide) {
-      io.to(roomName).emit("dream_evaluating");
+    // 6개 단어 모두 수집되었는지 확인
+    const allCollected = CATEGORIES.every(cat => !!game.words[cat]);
+    if (allCollected) {
+      io.to(roomName).emit("feed_story_creating");
 
       try {
-        const result = await dreamGameService.createDreamStory(game.hint, {
-          place: game.choices.architect,
-          guide: game.choices.guide,
-        });
-
-        const changes = {
-          healthHp: result.changes?.healthHp ?? 10,
-          affection: result.changes?.affection ?? 10,
-          exp: result.changes?.exp ?? 10,
+        const result = await feedGameService.create5W1HStory(game.words);
+        
+        // 밸런스 조정: 점수(0~100) 기반
+        // statChange: -20 ~ +20 (점수 50점 기준 0)
+        const statChange = Math.floor((result.score / 2.5) - 20);
+        
+        const rewards = {
+          hunger: Math.max(20, Math.floor(result.score)), // 최소 20은 채워줌, 최대 100
+          knowledge: statChange,
+          affection: statChange,
+          exp: Math.floor(result.score / 2), // 경험치는 최대 50
+          stress: -Math.floor(statChange / 2) // 잘하면 스트레스 감소, 못하면 증가
         };
 
         const { pool } = require("../database/database");
         await pool.query(
-          `UPDATE pets SET health_hp = LEAST(health_hp + $2, 100), affection = LEAST(affection + $3, 100), exp = exp + $4 WHERE id = $1`,
-          [childId, changes.healthHp, changes.affection, changes.exp]
+          `UPDATE pets SET 
+            hunger = LEAST(hunger + $2, 100), 
+            knowledge = GREATEST(0, LEAST(knowledge + $3, 100)), 
+            affection = GREATEST(0, LEAST(affection + $4, 100)), 
+            exp = exp + $5,
+            stress = GREATEST(0, LEAST(stress + $6, 100))
+           WHERE id = $1`,
+          [childId, rewards.hunger, rewards.knowledge, rewards.affection, rewards.exp, rewards.stress]
         );
 
-        io.to(roomName).emit("dream_game_result", { ...result, changes });
-        dreamGameMap.delete(roomName);
-        dreamRoomStartedSet.delete(roomName);
+        io.to(roomName).emit("feed_game_result", { ...result, rewards });
+        feedGameMap.delete(roomName);
+        feedRoomStartedSet.delete(roomName);
       } catch (err) {
-        console.error("[DREAM] Result error:", err);
-        io.to(roomName).emit("dream_game_error", { message: "꿈의 연결이 끊어졌어요." });
+        console.error("[FEED] Story gen error:", err);
+        io.to(roomName).emit("feed_game_error", { message: "이야기를 만드는 데 실패했어요." });
       }
     }
   });
 
-  socket.on("leave_dream_room", async ({ childId, petName }) => {
-    const roomName = `dream_room_${childId}`;
+  socket.on("leave_feed_room", async ({ childId, petName }) => {
+    const roomName = `feed_room_${childId}`;
     socket.leave(roomName);
-    delete socket.dreamRoomId;
+    delete socket.feedRoomId;
 
     setTimeout(async () => {
       const sockets = await io.in(roomName).fetchSockets();
       const stillIn = sockets.some(s => String(s.data?.petId) === String(socket.petId));
       if (!stillIn) {
-        io.to(roomName).emit("dream_partner_left", petName || "배우자");
-        dreamGameMap.delete(roomName);
-        dreamRoomStartedSet.delete(roomName);
+        io.to(roomName).emit("feed_partner_left", petName || "배우자");
+        feedGameMap.delete(roomName);
+        feedRoomStartedSet.delete(roomName);
       }
     }, 500);
   });
@@ -343,7 +356,10 @@ module.exports = (io, socket, state) => {
       const game = bathGameMap.get(roomName);
       if (game) {
         socket.emit("bath_game_started", {
-          hint: game.hint,
+          category: game.category,
+          hint: game.hint1, // 무조건 기본 힌트(hint1)는 보여줌
+          extraHint: game.extraHintRevealed ? game.hint2 : null,
+          extraHintRevealed: game.extraHintRevealed || false,
           currentTurnPetId: game.participants[0],
         });
       }
@@ -352,18 +368,109 @@ module.exports = (io, socket, state) => {
 
     bathRoomStartedSet.add(roomName);
     try {
-      const { word, hint } = await bathGameService.initializeGame();
+      const { word, category, hint1, hint2 } = await bathGameService.initializeGame();
       const pIds = uniquePetIds;
       bathGameMap.set(roomName, {
         word,
-        hint,
+        category,
+        hint1,
+        hint2,
         questions: [],
         turnCount: 0,
         participants: pIds,
+        extraHintRevealed: false,
+        extraHintProposedBy: null,
+        extraHintVotes: new Set(),
+        giveupProposedBy: null,
+        giveupVotes: new Set(),
       });
-      io.in(roomName).emit("bath_game_started", { hint, currentTurnPetId: pIds[0] });
+      // 시작 시 기본 힌트(hint1)만 전송
+      io.in(roomName).emit("bath_game_started", { 
+        category, 
+        hint: hint1, 
+        extraHint: null,
+        extraHintRevealed: false, 
+        currentTurnPetId: pIds[0] 
+      });
     } catch (err) {
       bathRoomStartedSet.delete(roomName);
+    }
+  });
+
+  socket.on("propose_bath_extra_hint", ({ childId, petName }) => {
+    const roomName = `bath_room_${childId}`;
+    const game = bathGameMap.get(roomName);
+    if (!game || game.extraHintRevealed) return;
+
+    game.extraHintProposedBy = socket.petId;
+    game.extraHintVotes.clear();
+    game.extraHintVotes.add(socket.petId);
+
+    socket.to(roomName).emit("bath_extra_hint_proposed", { proposerName: petName });
+  });
+
+  socket.on("respond_bath_extra_hint", ({ childId, approved }) => {
+    const roomName = `bath_room_${childId}`;
+    const game = bathGameMap.get(roomName);
+    if (!game) return;
+
+    if (approved) {
+      game.extraHintVotes.add(socket.petId);
+      if (game.extraHintVotes.size >= Math.min(game.participants.length, 2)) {
+        game.extraHintRevealed = true;
+        io.in(roomName).emit("bath_extra_hint_revealed", { extraHint: game.hint2 });
+      }
+    } else {
+      game.extraHintProposedBy = null;
+      game.extraHintVotes.clear();
+      io.in(roomName).emit("bath_extra_hint_rejected");
+    }
+  });
+
+  // 기존 request_bath_hint는 제거하거나 무시
+  socket.on("request_bath_hint", () => {});
+
+  socket.on("propose_bath_giveup", ({ childId, petName }) => {
+    const roomName = `bath_room_${childId}`;
+    const game = bathGameMap.get(roomName);
+    if (!game) return;
+
+    game.giveupProposedBy = socket.petId;
+    game.giveupVotes.clear();
+    game.giveupVotes.add(socket.petId);
+
+    socket.to(roomName).emit("bath_giveup_proposed", { proposerName: petName });
+  });
+
+  socket.on("respond_bath_giveup", async ({ childId, approved }) => {
+    const roomName = `bath_room_${childId}`;
+    const game = bathGameMap.get(roomName);
+    if (!game) return;
+
+    if (approved) {
+      game.giveupVotes.add(socket.petId);
+      if (game.giveupVotes.size >= Math.min(game.participants.length, 2)) {
+        // 전원 동의 (또는 최소 2명 동의) 시 포기 처리
+        const evaluation = await bathGameService.evaluateResult(false, game.turnCount, game.word, game.questions);
+        const changes = {
+          cleanliness: evaluation.changes?.cleanliness ?? 30,
+          affection: -20, // 포기 페널티 강화
+          knowledge: -10,
+          exp: 5,
+        };
+        const { pool } = require("../database/database");
+        await pool.query(
+          `UPDATE pets SET cleanliness = LEAST(cleanliness + $2, 100), affection = GREATEST(affection + $3, 0), knowledge = GREATEST(knowledge + $4, 0), exp = exp + $5 WHERE id = $1`,
+          [childId, changes.cleanliness, changes.affection, changes.knowledge, changes.exp],
+        );
+        io.in(roomName).emit("bath_game_result", { ...evaluation, word: game.word, changes, isGiveup: true });
+        bathGameMap.delete(roomName);
+        bathRoomStartedSet.delete(roomName);
+      }
+    } else {
+      game.giveupProposedBy = null;
+      game.giveupVotes.clear();
+      io.in(roomName).emit("bath_giveup_rejected");
     }
   });
 
@@ -418,7 +525,7 @@ module.exports = (io, socket, state) => {
     io.in(roomName).emit("bath_guess_attempted", { petName, guess, isCorrect });
 
     if (isCorrect) {
-      const evaluation = await bathGameService.evaluateResult(true, game.turnCount, game.word, game.questions);
+      const evaluation = await bathGameService.evaluateResult(true, game.turnCount, game.word, game.questions, game.extraHintRevealed);
       const changes = {
         cleanliness: evaluation.changes?.cleanliness ?? 100,
         affection: evaluation.changes?.affection ?? 15,
