@@ -28,14 +28,16 @@ module.exports = (io, socket, state) => {
     socket.playRoomId = childId;
     socket.join(roomName);
 
+    const normalizedCurrentId = String(petId || "").trim();
     const sockets = await io.in(roomName).fetchSockets();
-    const uniquePetIds = [
-      ...new Set(
-        sockets
-          .map((s) => String(s.data?.petId))
-          .filter((id) => id && id !== "undefined"),
-      ),
-    ];
+    const activePetIds = new Set(
+      sockets
+        .map((s) => String(s.data?.petId || "").trim())
+        .filter((id) => id && id !== "undefined" && id !== "null"),
+    );
+    activePetIds.add(normalizedCurrentId);
+
+    const uniquePetIds = [...activePetIds];
 
     if (playRoomStartedSet.has(roomName)) {
       const scenario = roomScenarioMap.get(roomName);
@@ -370,13 +372,18 @@ module.exports = (io, socket, state) => {
     const game = bathGameMap.get(roomName);
     if (!game) return;
 
+    if (game.turnCount >= 10) {
+      socket.emit("bath_last_chance", { turnCount: game.turnCount });
+      return;
+    }
+
     const answer = await bathGameService.answerQuestion(game.word, question);
     const log = { petName, question, answer };
     game.questions.push(log);
     game.turnCount++;
     io.in(roomName).emit("bath_question_answered", log);
 
-    if (game.turnCount >= 20) {
+    if (game.turnCount >= 10) {
       io.in(roomName).emit("bath_last_chance", { turnCount: game.turnCount });
       return;
     }
@@ -426,17 +433,17 @@ module.exports = (io, socket, state) => {
       io.in(roomName).emit("bath_game_result", { ...evaluation, word: game.word, changes });
       bathGameMap.delete(roomName);
       bathRoomStartedSet.delete(roomName);
-    } else if (game.turnCount >= 20) {
-      const evaluation = await bathGameService.evaluateResult(false, 20, game.word, game.questions);
+    } else if (game.turnCount >= 10) {
+      const evaluation = await bathGameService.evaluateResult(false, 10, game.word, game.questions);
       const changes = {
         cleanliness: evaluation.changes?.cleanliness ?? 30,
-        affection: evaluation.changes?.affection ?? -5,
-        knowledge: evaluation.changes?.knowledge ?? 0,
+        affection: evaluation.changes?.affection ?? -10,
+        knowledge: evaluation.changes?.knowledge ?? -5,
         exp: evaluation.changes?.exp ?? 10,
       };
       const { pool } = require("../database/database");
       await pool.query(
-        `UPDATE pets SET cleanliness = LEAST(cleanliness + $2, 100), affection = GREATEST(affection + $3, 0), knowledge = LEAST(knowledge + $4, 100), exp = exp + $5 WHERE id = $1`,
+        `UPDATE pets SET cleanliness = LEAST(cleanliness + $2, 100), affection = GREATEST(affection + $3, 0), knowledge = GREATEST(knowledge + $4, 0), exp = exp + $5 WHERE id = $1`,
         [childId, changes.cleanliness, changes.affection, changes.knowledge, changes.exp],
       );
       io.in(roomName).emit("bath_game_result", { ...evaluation, word: game.word, changes });

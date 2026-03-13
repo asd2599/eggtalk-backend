@@ -55,6 +55,7 @@ const hatchProgressMap = new Map();
 
 // 게임/상황극 관리
 const rolePlayReadyMap = new Map();
+const playRoomStartedSet = new Set();
 const dreamRoomStartedSet = new Set();
 const bathRoomStartedSet = new Set();
 
@@ -99,6 +100,7 @@ const state = {
   socketToPetName,
   hatchProgressMap,
   rolePlayReadyMap,
+  playRoomStartedSet,
   dreamRoomStartedSet,
   bathRoomStartedSet,
   roomParticipantsMap,
