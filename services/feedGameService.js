@@ -1,78 +1,69 @@
-/**
- * feedGameService.js
- * 분유주기 협동 게임 전용 AI 서비스
- */
-
 const { OpenAI } = require("openai");
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 /**
- * AI가 아기가 원하는 분유 맛의 힌트를 생성합니다.
- * @returns {Promise<string>} 힌트 문자열
+ * 아기 펫이 맡은 2개 요소에 대한 참신한 단어 생성
  */
-const generateCookingHint = async () => {
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content:
-            "너는 육아 게임의 나레이터야. 아기가 오늘 어떤 기분이고 어떤 맛의 분유를 원하는지 아주 짧고 창의적인 힌트를 한 문장으로 줘. 예: '달콤한 구름 위를 걷는 기분이 되고 싶대요!', '상큼한 숲속 요정이 찾아온 것 같아요!'",
-        },
-      ],
-      max_tokens: 100,
-      temperature: 0.9,
-    });
-    return response.choices[0].message.content.trim();
-  } catch (err) {
-    console.error("AI Hint Error:", err);
-    return "오늘따라 아주 달콤한 게 당기나 봐요!";
-  }
+const generatePetWords = async (categories) => {
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      {
+        role: "system",
+        content: `너는 아주 창의적이고 엉뚱한 아기 펫이야. 육하원칙 게임을 하고 있어.
+배정된 2가지 카테고리에 대해 아주 재미있고 참신한 단어(또는 짧은 구절)를 생성해줘.
+
+카테고리 목록: ${categories.join(", ")}
+
+반드시 아래 JSON 형식으로만 응답해:
+{
+  "${categories[0]}": "창의적인 단어",
+  "${categories[1]}": "창의적인 단어"
+}`,
+      },
+    ],
+    response_format: { type: "json_object" },
+  });
+
+  return JSON.parse(response.choices[0].message.content);
 };
 
 /**
- * 부모들이 고른 재료 조합을 AI가 평가합니다.
- * @param {string} hint - 처음에 주어진 힌트
- * @param {Object} ingredients - { base: string, topping: string }
- * @returns {Promise<{score: number, story: string}>} 점수(0-100)와 스토리
+ * 6개 단어 조합 스토리 생성 및 채점
  */
-const evaluateCooking = async (hint, ingredients) => {
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: `너는 아기의 미식 가이드야. 부모가 만든 분유 레시피를 평가해줘.
-          
-          오늘의 힌트: "${hint}"
-          선택한 베이스: "${ingredients.base}"
-          선택한 토핑: "${ingredients.topping}"
-          
-          위 조합이 힌트와 얼마나 잘 어울리는지 0~100점 사이로 점수를 매기고, 아기가 먹었을 때의 반응을 아주 귀엽고 재미있게 2~3문장으로 설명해줘.
-          
-          반드시 JSON 형식으로 응답해:
-          {
-            "score": 85,
-            "story": "우와! 정말 구름처럼 폭신하고 달콤한 맛이에요! 아기가 너무 기분 좋아서 엉덩이 춤을 춰요!"
-          }`,
-        },
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0.8,
-    });
-    return JSON.parse(response.choices[0].message.content);
-  } catch (err) {
-    console.error("AI Evaluation Error:", err);
-    return {
-      score: 70,
-      story: "음~ 나쁘지 않은 조합이에요! 아기가 맛있게 잘 먹었답니다.",
-    };
-  }
+const create5W1HStory = async (allWords) => {
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      {
+        role: "system",
+        content: `너는 육하원칙(누가, 언제, 어디서, 무엇을, 어떻게, 왜) 단어로 이야기를 만드는 천재 작가야.
+입력된 6개 단어를 모두 사용하여 아주 웃기고 창의적인 이야기를 만들어줘.
+
+단어 목록:
+- 누가: ${allWords.who}
+- 언제: ${allWords.when}
+- 어디서: ${allWords.where}
+- 무엇을: ${allWords.what}
+- 어떻게: ${allWords.how}
+- 왜: ${allWords.why}
+
+채점 기준(0~100): 참신함, 재미, 단어 활용력
+반드시 아래 JSON 형식으로만 응답해:
+{
+  "story": "완성된 이야기 (2~3문장)",
+  "score": 0~100 사이 정수,
+  "feedback": "이야기에 대한 짧은 감상평"
+}`,
+      },
+    ],
+    response_format: { type: "json_object" },
+  });
+
+  return JSON.parse(response.choices[0].message.content);
 };
 
 module.exports = {
-  generateCookingHint,
-  evaluateCooking,
+  generatePetWords,
+  create5W1HStory,
 };
