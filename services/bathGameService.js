@@ -66,16 +66,25 @@ const bathGameService = {
    */
   answerQuestion: async (word, question) => {
     try {
+      const wordLength = word.length;
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
           {
             role: "system",
-            content: `너는 귀여운 아기 펫 '몽글이'야. 정답 "${word}"에 대해 부모님의 질문에 "예", "아니오", "모르겠어"로만 대답해.`,
+            content: `너는 스무고개 퀴즈의 출제자이자 귀여운 아기 펫 '몽글이'야.
+현재 네가 마음속으로 생각한 정답 단어는 "${word}" (총 ${wordLength}글자)야.
+
+[대답 규칙]
+1. 부모님의 질문이 정답 "${word}"의 특징, 용도, 범주, 상태, 그리고 **글자 수** 등과 일치하는지 냉철하게 판단해.
+2. 질문에 "몇 글자야?"와 같이 직접적인 정보를 묻는 경우, 규칙상 알려줄 수 없으므로 "모르겠어"라고 답해.
+3. 하지만 "두 글자야?", "세 글자야?"와 같이 OX로 답할 수 있는 질문에는 정답의 실제 글자 수(${wordLength})와 대조하여 정확히 답해.
+4. 답변은 반드시 "예", "아니오", "모르겠어" 중 하나로만 해야 해.
+5. 부가 설명 없이 오직 한 단어로만 대답해.`,
           },
           { role: "user", content: question },
         ],
-        max_tokens: 10,
+        max_tokens: 20,
         temperature: 0.1,
       });
       let answer = response.choices[0].message.content.trim().replace(/['"]/g, "");
