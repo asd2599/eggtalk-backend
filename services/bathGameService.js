@@ -128,8 +128,8 @@ const bathGameService = {
         isSuccess: false,
         score: 30,
         story:
-          "아쉽게도 정답을 맞히지 못했어. 그래도 궁금하게 물어봐줘서 엄청 재밌었어! 🐾",
-        changes: { cleanliness: 30, affection: -5, knowledge: 0, exp: 10 },
+          "너~무 어려웠나 봐요! 정답을 맞히지 못했지만, 다음엔 꼭 맞힐 수 있을 거예요! 🐾",
+        changes: { cleanliness: 30, affection: -10, knowledge: -5, exp: 10 },
       };
     }
 
@@ -139,7 +139,7 @@ const bathGameService = {
         .map((q, i) => `Q${i + 1}: ${q.question} -> A: ${q.answer}`)
         .join("\n");
       const prompt = `너는 귀여운 아기 펫 '몽글이'야. 부모님과 목욕하면서 스무고개 놀이를 했어.
-정답 단어는 "${targetWord}"였고, 부모님은 총 ${turnCount}번의 시도(질문+정답 말하기) 만에 방금 정답을 정확히 맞췄어!
+정답 단어는 "${targetWord}"였고, 부모님은 총 ${turnCount}번의 시도(질문+정답 말하기) 만에 방금 정답을 정확히 맞췄어! (최대 10번 제한)
 지금까지 오간 질문과 대답 로그는 다음과 같아:
 ${logText}
 
