@@ -6,6 +6,7 @@ const {
 } = require("../services/rolePlayService");
 const feedGameService = require("../services/feedGameService");
 const bathGameService = require("../services/bathGameService");
+const { pool } = require("../database/database");
 
 module.exports = (io, socket, state) => {
   const {
@@ -168,7 +169,6 @@ module.exports = (io, socket, state) => {
     try {
       const roundMessages = Array.from(round?.values() || []);
       const rewards = await evaluateFinalRewards(roundMessages, 100);
-      const { pool } = require("../database/database");
       await pool.query(
         `UPDATE pets SET knowledge = LEAST(knowledge + $2, 100), affection = LEAST(affection + $3, 100), exp = exp + $4, stress = GREATEST(0, LEAST(stress + $5, 100)) WHERE id = $1`,
         [
@@ -289,14 +289,13 @@ module.exports = (io, socket, state) => {
         const statChange = Math.floor((result.score / 2.5) - 20);
         
         const rewards = {
-          hunger: Math.max(20, Math.floor(result.score)), // 최소 20은 채워줌, 최대 100
+          hunger: Math.max(20, Math.floor(result.score)),
           knowledge: statChange,
           affection: statChange,
-          exp: Math.floor(result.score / 2), // 경험치는 최대 50
-          stress: -Math.floor(statChange / 2) // 잘하면 스트레스 감소, 못하면 증가
+          exp: Math.floor(result.score / 2),
+          stress: -Math.floor(statChange / 2)
         };
 
-        const { pool } = require("../database/database");
         await pool.query(
           `UPDATE pets SET 
             hunger = LEAST(hunger + $2, 100), 
@@ -458,7 +457,6 @@ module.exports = (io, socket, state) => {
           knowledge: -10,
           exp: 5,
         };
-        const { pool } = require("../database/database");
         await pool.query(
           `UPDATE pets SET cleanliness = LEAST(cleanliness + $2, 100), affection = GREATEST(affection + $3, 0), knowledge = GREATEST(knowledge + $4, 0), exp = exp + $5 WHERE id = $1`,
           [childId, changes.cleanliness, changes.affection, changes.knowledge, changes.exp],
@@ -532,7 +530,6 @@ module.exports = (io, socket, state) => {
         knowledge: evaluation.changes?.knowledge ?? 10,
         exp: evaluation.changes?.exp ?? 50,
       };
-      const { pool } = require("../database/database");
       await pool.query(
         `UPDATE pets SET cleanliness = LEAST(cleanliness + $2, 100), affection = LEAST(affection + $3, 100), knowledge = LEAST(knowledge + $4, 100), exp = exp + $5 WHERE id = $1`,
         [childId, changes.cleanliness, changes.affection, changes.knowledge, changes.exp],
@@ -548,7 +545,6 @@ module.exports = (io, socket, state) => {
         knowledge: evaluation.changes?.knowledge ?? -5,
         exp: evaluation.changes?.exp ?? 10,
       };
-      const { pool } = require("../database/database");
       await pool.query(
         `UPDATE pets SET cleanliness = LEAST(cleanliness + $2, 100), affection = GREATEST(affection + $3, 0), knowledge = GREATEST(knowledge + $4, 0), exp = exp + $5 WHERE id = $1`,
         [childId, changes.cleanliness, changes.affection, changes.knowledge, changes.exp],
