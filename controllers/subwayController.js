@@ -74,14 +74,15 @@ exports.getSubwayPositions = async (req, res) => {
         }
       }
 
-      let lat = stationCoords ? stationCoords.lat : 37.566229;
-      let lng = stationCoords ? stationCoords.lng : 126.981498;
+      if (!stationCoords) return null; // 좌표 불명 열차 제외 (시청 근처에 아이콘이 쌓이는 버그 방지)
+      let lat = stationCoords.lat;
+      let lng = stationCoords.lng;
       let angle = 0;
 
       // Calculate bearing
       let lineStations = SUBWAY_LINE_MAP[lineName];
       if (lineStations && Array.isArray(lineStations)) {
-        const currentIndex = lineStations.indexOf(stationName);
+        const currentIndex = lineStations.indexOf(finalStationName);
         if (currentIndex !== -1) {
           let nextIndex =
             item.updnLine === '0' ? currentIndex - 1 : currentIndex + 1;
@@ -115,8 +116,9 @@ exports.getSubwayPositions = async (req, res) => {
       };
     });
 
-    cache.set(cacheKey, { timestamp: Date.now(), data: positions });
-    res.json(positions);
+    const validPositions = positions.filter(Boolean);
+    cache.set(cacheKey, { timestamp: Date.now(), data: validPositions });
+    res.json(validPositions);
   } catch (error) {
     console.error('Subway API Error:', error.message);
     res.status(500).json({ error: 'Failed to fetch subway positions' });
