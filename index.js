@@ -173,13 +173,8 @@ io.on("connection", (socket) => {
       io.emit("online_users_list", Array.from(activeUsers.keys()));
     }
 
-    if (socket.roomId && socket.petName) {
-      socket.to(socket.roomId).emit("receive_dating_message", {
-        sender: "System",
-        message: `${socket.petName}님이 방을 나갔습니다.`,
-        isSystem: true,
-      });
-    }
+    // 접속자 수 실시간 업데이트 (연결 해제 반영)
+    io.emit("update_user_count", io.engine.clientsCount);
   });
 });
 
@@ -190,6 +185,7 @@ app.use(require("./routes/userRoutes"));
 app.use(require("./routes/petRoutes"));
 app.use("/api", require("./routes/roomRoutes"));
 app.use("/api/friends", require("./routes/friendRoutes"));
+app.use("/api/messages", require("./routes/messageRoutes"));
 app.use("/api", require("./routes/subwayRoutes"));
 app.use("/api", require("./routes/busRoutes"));
 app.use("/api", require("./routes/tmapRoutes"));

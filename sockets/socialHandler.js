@@ -7,6 +7,14 @@ module.exports = (io, socket, state) => {
     if (!activeUsers.has(petName)) activeUsers.set(petName, new Set());
     activeUsers.get(petName).add(socket.id);
     io.emit("online_users_list", Array.from(activeUsers.keys()));
+    // 로그인 시점에 실시간 접속자 수 동기화
+    io.emit("update_user_count", io.engine.clientsCount);
+  });
+
+  socket.on("get_online_users", (callback) => {
+    if (typeof callback === "function") {
+      callback(Array.from(activeUsers.keys()));
+    }
   });
 
   // [Friend/Breeding Requests]
@@ -41,4 +49,14 @@ module.exports = (io, socket, state) => {
       });
     },
   );
+
+  socket.on("send_direct_message", (data) => {
+    const { receiverPetName } = data;
+    const receiverSockets = activeUsers.get(receiverPetName);
+    if (receiverSockets) {
+      receiverSockets.forEach(socketId => {
+        io.to(socketId).emit("receive_direct_message", data);
+      });
+    }
+  });
 };
