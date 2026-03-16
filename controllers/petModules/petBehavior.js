@@ -72,6 +72,7 @@ const chatWithPet = async (req, res) => {
     if (petResult.rows.length === 0) return res.status(404).json({ message: "펫을 먼저 생성해주세요." });
     const pet = petResult.rows[0];
 
+    const VALID_STATS = ["empathy", "logic", "knowledge", "affection", "altruism", "extroversion", "humor", "openness", "directness", "curiosity"];
     let reply = "";
     let analysisResult = { empathy: 0, logic: 0, knowledge: 0, affection: 0, altruism: 0, extroversion: 0, humor: 0, openness: 0, directness: 0, curiosity: 0 };
 
@@ -84,8 +85,10 @@ const chatWithPet = async (req, res) => {
         너는 이제 사용자의 소중한 인공지능 반려동물이야. 이름은 '${pet.name}'이고, 성향은 '${pet.tendency}'야.
         아래 두 가지 작업을 수행하고 JSON 형식으로만 반환해:
         1. "reply": 사용자의 메시지에 대해 짧고 귀엽게 1~3문장으로 대답. 이모지도 사용.
-        2. "analysis": 사용자가 입력한 메시지 자체를 분석해서 10가지 능력치 증감을 -5 ~ +5 정수로 평가.
-        { "reply": "...", "analysis": { ... } }
+        2. "analysis": 사용자가 입력한 메시지 자체를 분석해서 아래 10가지 능력치 증감을 -5 ~ +5 정수로 평가.
+           능력치 키 목록: ${VALID_STATS.join(", ")}
+           (반드시 위 목록에 있는 키만 사용해야 해!)
+        { "reply": "...", "analysis": { "empathy": 2, "affection": 3, ... } }
       `;
       try {
         const completion = await openai.chat.completions.create({
@@ -97,7 +100,15 @@ const chatWithPet = async (req, res) => {
         });
         const parsedResponse = JSON.parse(completion.choices[0].message.content);
         reply = parsedResponse.reply || "멍멍! 잘 이해하지 못했어요.";
-        analysisResult = { ...analysisResult, ...(parsedResponse.analysis || {}) };
+        
+        // 유효한 능력치만 필터링하여 반영
+        if (parsedResponse.analysis) {
+          Object.keys(parsedResponse.analysis).forEach(key => {
+            if (VALID_STATS.includes(key)) {
+              analysisResult[key] = Number(parsedResponse.analysis[key]) || 0;
+            }
+          });
+        }
       } catch (error) {
         console.error("AI 분석 파싱 에러:", error);
         reply = "멍! (응답을 분석하는데 실패했어..!)";
@@ -106,20 +117,22 @@ const chatWithPet = async (req, res) => {
 
     const updateQuery = `
       UPDATE pets
-      SET exp = exp + 10, empathy = $1, logic = $2, knowledge = $3, affection = $4, altruism = $5, extroversion = $6, humor = $7, openness = $8, directness = $9, curiosity = $10
+      SET exp = exp + 10, 
+          empathy = $1, logic = $2, knowledge = $3, affection = $4, altruism = $5, 
+          extroversion = $6, humor = $7, openness = $8, directness = $9, curiosity = $10
       WHERE id = $11 RETURNING *
     `;
     const updateResult = await pool.query(updateQuery, [
-      clampValue(pet.empathy + (analysisResult.empathy || 0)),
-      clampValue(pet.logic + (analysisResult.logic || 0)),
-      clampValue(pet.knowledge + (analysisResult.knowledge || 0)),
-      clampValue(pet.affection + (analysisResult.affection || 0)),
-      clampValue(pet.altruism + (analysisResult.altruism || 0)),
-      clampValue(pet.extroversion + (analysisResult.extroversion || 0)),
-      clampValue(pet.humor + (analysisResult.humor || 0)),
-      clampValue(pet.openness + (analysisResult.openness || 0)),
-      clampValue(pet.directness + (analysisResult.directness || 0)),
-      clampValue(pet.curiosity + (analysisResult.curiosity || 0)),
+      clampValue(Number(pet.empathy) + analysisResult.empathy),
+      clampValue(Number(pet.logic) + analysisResult.logic),
+      clampValue(Number(pet.knowledge) + analysisResult.knowledge),
+      clampValue(Number(pet.affection) + analysisResult.affection),
+      clampValue(Number(pet.altruism) + analysisResult.altruism),
+      clampValue(Number(pet.extroversion) + analysisResult.extroversion),
+      clampValue(Number(pet.humor) + analysisResult.humor),
+      clampValue(Number(pet.openness) + analysisResult.openness),
+      clampValue(Number(pet.directness) + analysisResult.directness),
+      clampValue(Number(pet.curiosity) + analysisResult.curiosity),
       pet.id
     ]);
     const updatedPet = updateResult.rows[0];
@@ -179,20 +192,42 @@ const analyzeTendency = async (req, res) => {
     if (petResult.rows.length === 0) return res.status(404).json({ message: "펫을 먼저 생성해주세요." });
     const pet = petResult.rows[0];
 
+    const VALID_OPTIONS = {
+      face: ["angry", "confused", "dizzy", "excited", "gloomy", "neutral", "playful", "relaxed", "relieved", "sad", "smug", "tired"],
+      shape: ["circle", "rhombus", "square", "squircle"],
+      hand: ["closed", "open", "peace", "point", "rock", "thumb"]
+    };
+
     let newTendency = "neutral", newFace = "neutral", newHand = "open", newShape = "circle", analysisReason = "분석 완료";
     if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === "your_openai_api_key_here") {
       newTendency = "active"; newFace = "excited"; newHand = "peace"; newShape = "squircle";
     } else {
       const statsJson = JSON.stringify(pet);
-      const systemPrompt = `너는 펫 인격 부여술사야. 스탯 ${statsJson} 기반으로 tendency(1개 명사), face, hand, shape, reason(1문장)을 JSON으로 반환해.`;
+      const systemPrompt = `너는 펫 인격 부여술사야. 스탯 ${statsJson} 기반으로 펫의 성향과 외형을 분석해줘.
+다음 옵션 중에서만 선택해서 JSON으로 반환해:
+- tendency: 성향을 나타내는 1개 명사 (예: "용감함", "호기심" 등)
+- face: ${VALID_OPTIONS.face.join(", ")} 중 하나
+- shape: ${VALID_OPTIONS.shape.join(", ")} 중 하나
+- hand: ${VALID_OPTIONS.hand.join(", ")} 중 하나
+- reason: 분석 이유 (1문장)
+
+반드시 정확한 옵션 명칭을 사용해야 해.`;
+
       const completion = await openai.chat.completions.create({
         model: "gpt-3.5-turbo",
         response_format: { type: "json_object" },
         messages: [{ role: "system", content: systemPrompt }],
-        max_tokens: 150, temperature: 0.7,
+        max_tokens: 200, temperature: 0.7,
       });
+
       const parsed = JSON.parse(completion.choices[0].message.content);
-      newTendency = parsed.tendency || "neutral"; newFace = parsed.face || "neutral"; newHand = parsed.hand || "open"; newShape = parsed.shape || "circle"; analysisReason = parsed.reason || "분석 완료";
+      
+      // 유효성 검사 및 필터링
+      newTendency = parsed.tendency || "neutral";
+      newFace = VALID_OPTIONS.face.includes(parsed.face) ? parsed.face : "neutral";
+      newHand = VALID_OPTIONS.hand.includes(parsed.hand) ? parsed.hand : "open";
+      newShape = VALID_OPTIONS.shape.includes(parsed.shape) ? parsed.shape : "circle";
+      analysisReason = parsed.reason || "분석 완료";
     }
 
     const updateResult = await pool.query(`UPDATE pets SET tendency = $1, face = $2, hand = $3, shape = $4 WHERE id = $5 RETURNING *`, [newTendency, newFace, newHand, newShape, pet.id]);
