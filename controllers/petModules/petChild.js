@@ -1,4 +1,9 @@
 const { pool } = require("../../database/database");
+const { OpenAI } = require("openai");
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY || "dummy_key",
+});
 
 const getChildPet = async (req, res) => {
   try {
@@ -98,4 +103,67 @@ const abandonPet = async (req, res) => {
   finally { client.release(); }
 };
 
-module.exports = { getChildPet, hatchPet, performChildAction, renamePet, abandonPet };
+const analyzeChildTendency = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const parent = (await pool.query("SELECT * FROM pets WHERE user_id = $1", [userId])).rows[0];
+    if (!parent || !parent.child_id) return res.status(404).json({ message: "자식 펫이 없습니다." });
+    const childId = parent.child_id;
+
+    const childResult = await pool.query("SELECT * FROM pets WHERE id = $1", [childId]);
+    const child = childResult.rows[0];
+
+    const VALID_OPTIONS = {
+      face: ["angry", "confused", "dizzy", "excited", "gloomy", "neutral", "playful", "relaxed", "relieved", "sad", "smug", "tired"],
+      shape: ["circle", "rhombus", "square", "squircle"],
+      hand: ["closed", "open", "peace", "point", "rock", "thumb"]
+    };
+
+    let newTendency = "neutral", newFace = "neutral", newHand = "open", newShape = "circle", analysisReason = "분석 완료";
+    
+    if (process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== "your_openai_api_key_here") {
+      const statsJson = JSON.stringify(child);
+      const systemPrompt = `너는 아기 펫 발달 분석가야. 아기 펫의 현재 스탯 ${statsJson}을 보고 성장을 분석해줘.
+다음 옵션 중에서만 선택해서 JSON으로 반환해:
+- tendency: 아이의 현재 성향 (1개 명사, 예: "쑥스러움", "에너자이저" 등)
+- face: ${VALID_OPTIONS.face.join(", ")} 중 하나 (스탯에 어울리는 표정)
+- shape: ${VALID_OPTIONS.shape.join(", ")} 중 하나 (스탯에 어울리는 몸체형)
+- hand: ${VALID_OPTIONS.hand.join(", ")} 중 하나 (스탯에 어울리는 손 모양)
+- reason: 아이의 성향에 대한 설명 (1~2문장)
+- appearance_reason: 해당 외형(face, shape, hand)으로 변화한 이유에 대한 설명 (1~2문장)
+
+반드시 정확한 옵션 명칭을 사용해야 하며, 부모가 아이의 변화를 실감할 수 있도록 다정하고 상세하게 설명해줘.`;
+
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4-turbo-preview", // 더 정교한 분석을 위해 모델 업그레이드 제안 (없으면 gpt-3.5-turbo 유지)
+        response_format: { type: "json_object" },
+        messages: [{ role: "system", content: systemPrompt }],
+        max_tokens: 500,
+        temperature: 0.8, // 다양성을 위해 온도를 살짝 높임
+      });
+
+      const parsed = JSON.parse(completion.choices[0].message.content);
+      newTendency = parsed.tendency || "neutral";
+      newFace = VALID_OPTIONS.face.includes(parsed.face) ? parsed.face : "neutral";
+      newHand = VALID_OPTIONS.hand.includes(parsed.hand) ? parsed.hand : "open";
+      newShape = VALID_OPTIONS.shape.includes(parsed.shape) ? parsed.shape : "circle";
+      
+      // 성향 설명과 외형 설명을 합쳐서 풍부한 피드백 제공
+      const tendencyReason = parsed.reason || "발달 분석 완료";
+      const appearanceReason = parsed.appearance_reason || "새로운 모습으로 성장했습니다.";
+      analysisReason = `${tendencyReason}\n\n[외형 변화]: ${appearanceReason}`;
+    }
+
+    const updateResult = await pool.query(
+      `UPDATE pets SET tendency = $1, face = $2, hand = $3, shape = $4 WHERE id = $5 RETURNING *`,
+      [newTendency, newFace, newHand, newShape, childId]
+    );
+
+    return res.status(200).json({ pet: updateResult.rows[0], reason: analysisReason, message: "아기 펫 성향 분석 완료" });
+  } catch (error) {
+    console.error("analyzeChildTendency error:", error);
+    return res.status(500).json({ message: "서버 에러" });
+  }
+};
+
+module.exports = { getChildPet, hatchPet, performChildAction, renamePet, abandonPet, analyzeChildTendency };

@@ -31,9 +31,15 @@ const giftToPet = async (req, res) => {
 
     const updateQuery = `
       UPDATE pets SET exp = $1, level = $2, health_hp = $3, hunger = $4, cleanliness = $5, stress = $6, affection = $7, altruism = $8, empathy = $9, knowledge = $10, logic = $11, extroversion = $12, humor = $13, openness = $14, directness = $15, curiosity = $16
-      WHERE name = $17 RETURNING *;
+      WHERE id = $17 RETURNING *;
     `;
-    const values = [pet.exp, pet.level, pet.health_hp, pet.hunger, pet.cleanliness, pet.stress, pet.affection, pet.altruism, pet.empathy, pet.knowledge, pet.logic, pet.extroversion, pet.humor, pet.openness, pet.directness, pet.curiosity, targetPetName];
+    const values = [
+      Number(pet.exp), Number(pet.level), 
+      Number(pet.health_hp), Number(pet.hunger), Number(pet.cleanliness), Number(pet.stress), 
+      Number(pet.affection), Number(pet.altruism), Number(pet.empathy), Number(pet.knowledge), Number(pet.logic), 
+      Number(pet.extroversion), Number(pet.humor), Number(pet.openness), Number(pet.directness), Number(pet.curiosity), 
+      pet.id
+    ];
     const updateResult = await pool.query(updateQuery, values);
 
     let reply = "";
