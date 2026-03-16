@@ -329,6 +329,25 @@ router.post("/api/pets/hatch", authenticateToken, petController.hatchPet);
 
 /**
  * @swagger
+ * /api/pets/child/analyze-tendency:
+ *   post:
+ *     summary: "아기 펫 AI 성향 분석"
+ *     description: "아기 펫의 현재 상태를 기반으로 AI 성향 분석을 수행합니다."
+ *     tags: [Pets]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: "성향 분석 성공"
+ */
+router.post(
+  "/api/pets/child/analyze-tendency",
+  authenticateToken,
+  petController.analyzeChildTendency,
+);
+
+/**
+ * @swagger
  * /api/pets/{petId}/name:
  *   patch:
  *     summary: "펫 이름 변경"

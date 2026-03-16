@@ -75,4 +75,15 @@ module.exports = (io, socket, state) => {
       io.in(roomName).emit("child_pet_rename_approved", { newName });
     else socket.to(roomName).emit("child_pet_rename_rejected");
   });
+
+  socket.on("child_tendency_analyze_request", ({ childId, requesterName }) => {
+    const roomName = `child_room_${childId}`;
+    socket.to(roomName).emit("child_tendency_analyze_proposed", { requesterName });
+  });
+
+  socket.on("child_tendency_analyze_response", ({ childId, approved }) => {
+    const roomName = `child_room_${childId}`;
+    if (approved) io.in(roomName).emit("child_tendency_analyze_sync");
+    else socket.to(roomName).emit("child_tendency_analyze_rejected");
+  });
 };
