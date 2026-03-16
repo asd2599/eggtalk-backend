@@ -81,7 +81,7 @@ exports.getSubwayPositions = async (req, res) => {
       // Calculate bearing
       let lineStations = SUBWAY_LINE_MAP[lineName];
       if (lineStations && Array.isArray(lineStations)) {
-        const currentIndex = lineStations.indexOf(stationName);
+        const currentIndex = lineStations.indexOf(finalStationName);
         if (currentIndex !== -1) {
           let nextIndex =
             item.updnLine === '0' ? currentIndex - 1 : currentIndex + 1;
