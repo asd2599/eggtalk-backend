@@ -57,6 +57,31 @@ exports.getReceivedMessages = async (req, res) => {
   }
 };
 
+// 쪽지 목록 조회 (내가 보낸 쪽지)
+exports.getSentMessages = async (req, res) => {
+  console.log("[DEBUG-BACK] getSentMessages hit for user:", req.user.id);
+  const userId = req.user.id;
+
+  try {
+    const query = `
+      SELECT m.*, p.name as receiver_pet_name, p.color as receiver_pet_color
+      FROM messages m
+      JOIN pets p ON m.receiver_id = p.user_id
+      WHERE m.sender_id = $1
+      ORDER BY m.created_at DESC;
+    `;
+    const result = await pool.query(query, [userId]);
+
+    res.status(200).json({
+      success: true,
+      messages: result.rows
+    });
+  } catch (error) {
+    console.error("보낸 쪽지 조회 에러:", error);
+    res.status(500).json({ message: "서버 오류가 발생했습니다." });
+  }
+};
+
 // 읽음 처리
 exports.markAsRead = async (req, res) => {
   const userId = req.user.id;

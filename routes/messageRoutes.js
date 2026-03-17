@@ -37,13 +37,15 @@ router.post("/", authenticateToken, messageController.sendMessage);
 
 /**
  * @swagger
- * /api/messages:
+ * /api/messages/sent:
  *   get:
- *     summary: "받은 쪽지 목록 조회"
+ *     summary: "보낸 쪽지 목록 조회"
  *     tags: [Messages]
  *     security:
  *       - bearerAuth: []
  */
+router.get("/sent", authenticateToken, messageController.getSentMessages);
+
 router.get("/", authenticateToken, messageController.getReceivedMessages);
 
 /**

@@ -71,7 +71,7 @@ const cleanupRolePlayReady = (socket, childId) => {
   const roomName = `child_room_${childId}`;
   const readySet = rolePlayReadyMap.get(roomName);
   if (readySet) {
-    readySet.delete(socket.petId);
+    readySet.delete(socket.petName);
     if (readySet.size === 0) rolePlayReadyMap.delete(roomName);
   }
 };
@@ -129,6 +129,7 @@ io.on("connection", (socket) => {
       bathRoomId,
       id,
     } = socket;
+
     const droppedName = socketToPetName.get(id) || childPetName || "배우자";
 
     if (childRoomId) {
@@ -164,13 +165,22 @@ io.on("connection", (socket) => {
 
     const petName = socketToPetName.get(id);
     if (petName) {
-      const userSockets = activeUsers.get(petName);
+      // 100% 문자열 보장 및 살균
+      const sanitizedName = typeof petName === "object" ? (petName.petName || petName.name || String(petName)) : String(petName);
+      
+      const userSockets = activeUsers.get(sanitizedName);
       if (userSockets) {
         userSockets.delete(id);
-        if (userSockets.size === 0) activeUsers.delete(petName);
+        if (userSockets.size === 0) activeUsers.delete(sanitizedName);
       }
       socketToPetName.delete(id);
-      io.emit("online_users_list", Array.from(activeUsers.keys()));
+      
+      // 전역 온라인 유저 목록: 중복 없는 순수 이름 배열(String[]) 보장
+      const onlineNames = Array.from(activeUsers.keys()).map(k => 
+        typeof k === "object" ? k.petName : String(k)
+      );
+      const uniqueNames = Array.from(new Set(onlineNames));
+      io.emit("online_users_list", uniqueNames);
     }
 
     // 접속자 수 실시간 업데이트 (연결 해제 반영)
