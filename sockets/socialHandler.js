@@ -24,8 +24,28 @@ module.exports = (io, socket, state) => {
     const uniqueNames = Array.from(new Set(onlineNames));
 
     io.emit("online_users_list", uniqueNames);
-    // 로그인 시점에 실시간 접속자 수 동기화
     io.emit("update_user_count", io.engine.clientsCount);
+  });
+
+  socket.on("user_logout", (data) => {
+    /* 클라이언트가 강제 로그아웃 버튼을 눌렀을 경우 연결을 자발적으로 청소 */
+    const petName = getSanitizedName(data) || socketToPetName.get(socket.id);
+    if (!petName) return;
+
+    const userSockets = activeUsers.get(petName);
+    if (userSockets) {
+      userSockets.delete(socket.id);
+      if (userSockets.size === 0) activeUsers.delete(petName);
+    }
+    socketToPetName.delete(socket.id);
+
+    const onlineNames = Array.from(activeUsers.keys()).map(k => 
+      typeof k === "object" ? k.petName : String(k)
+    );
+    const uniqueNames = Array.from(new Set(onlineNames));
+    
+    io.emit("online_users_list", uniqueNames);
+    io.emit("update_user_count", io.engine.clientsCount); // disconnect는 index에서 커버되지만 예방적 브로드캐스트 추가
   });
 
   socket.on("get_online_users", (callback) => {
