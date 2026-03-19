@@ -203,30 +203,35 @@ const analyzeTendency = async (req, res) => {
       newTendency = "active"; newFace = "excited"; newHand = "peace"; newShape = "squircle";
     } else {
       const statsJson = JSON.stringify(pet);
-      const systemPrompt = `너는 펫 인격 부여술사야. 스탯 ${statsJson} 기반으로 펫의 성향과 외형을 분석해줘.
+      const systemPrompt = `너는 펫 인격 부여술사야!
+펫의 스탯 데이터(${statsJson})를 심층 분석해서, 뻔하고 평범한 성향이나 외형 말고 아주 독특하고 개성 넘치는 콘셉트를 부여해줘.
+(예: 스탯 중 특정 수치가 유난히 높거나 낮으면 그 특징을 극대화해서 '광기의 과학자', '게으른 철학자', '우주 최강 관종' 등 재치있는 성향을 도출할 것)
+
 다음 옵션 중에서만 선택해서 JSON으로 반환해:
-- tendency: 성향을 나타내는 1개 명사 (예: "용감함", "호기심" 등)
-- face: ${VALID_OPTIONS.face.join(", ")} 중 하나
+- tendency: 펫의 개성을 강렬하게 나타내는 독특한 성향 (단어 또는 짧은 구절, 예: "중2병 다크호스", "지독한 평화주의자", "과몰입 오타쿠", "근육질 요정")
+- face: ${VALID_OPTIONS.face.join(", ")} 중 하나 (성향과 가장 찰떡이거나 반전 매력을 주는 표정)
 - shape: ${VALID_OPTIONS.shape.join(", ")} 중 하나
 - hand: ${VALID_OPTIONS.hand.join(", ")} 중 하나
-- reason: 분석 이유 (1문장)
+- reason: 이런 극단적이고 재미있는 성향과 외형을 부여한 이유 (재치있는 1문장)
 
-반드시 정확한 옵션 명칭을 사용해야 해.`;
+반드시 위 face, shape, hand 배열 안에 있는 정확한 영문 소문자 명칭만 사용해야 해!`;
 
       const completion = await openai.chat.completions.create({
         model: "gpt-3.5-turbo",
         response_format: { type: "json_object" },
         messages: [{ role: "system", content: systemPrompt }],
-        max_tokens: 200, temperature: 0.7,
+        max_tokens: 300, temperature: 0.9,
       });
 
       const parsed = JSON.parse(completion.choices[0].message.content);
       
-      // 유효성 검사 및 필터링
+      // 유효성 검사 및 필터링 (대소문자 무시 체계 기반)
+      const safeLower = (val) => (typeof val === 'string' ? val.toLowerCase() : "");
+      
       newTendency = parsed.tendency || "neutral";
-      newFace = VALID_OPTIONS.face.includes(parsed.face) ? parsed.face : "neutral";
-      newHand = VALID_OPTIONS.hand.includes(parsed.hand) ? parsed.hand : "open";
-      newShape = VALID_OPTIONS.shape.includes(parsed.shape) ? parsed.shape : "circle";
+      newFace = VALID_OPTIONS.face.includes(safeLower(parsed.face)) ? safeLower(parsed.face) : "neutral";
+      newHand = VALID_OPTIONS.hand.includes(safeLower(parsed.hand)) ? safeLower(parsed.hand) : "open";
+      newShape = VALID_OPTIONS.shape.includes(safeLower(parsed.shape)) ? safeLower(parsed.shape) : "circle";
       analysisReason = parsed.reason || "분석 완료";
     }
 
