@@ -90,6 +90,28 @@ module.exports = (io, socket, state) => {
     },
   );
 
+  socket.on(
+    "accept_friend_request",
+    ({ roomId, requesterPetName, receiverPetName }) => {
+      io.to(roomId).emit("friend_request_accepted", {
+        roomId,
+        requesterPetName,
+        receiverPetName,
+      });
+    },
+  );
+
+  socket.on(
+    "reject_friend_request",
+    ({ roomId, requesterPetName, receiverPetName }) => {
+      io.to(roomId).emit("friend_request_rejected", {
+        roomId,
+        requesterPetName,
+        receiverPetName,
+      });
+    },
+  );
+
   socket.on("send_direct_message", (data) => {
     const { receiverPetName } = data;
     const receiverSockets = activeUsers.get(receiverPetName);
