@@ -32,6 +32,29 @@ router.get("/api/pets/my", authenticateToken, petController.getMyPet);
 
 /**
  * @swagger
+ * /api/pets/{petId}:
+ *   get:
+ *     summary: "특정 펫 정보 조회"
+ *     description: "지정된 ID의 펫 정보를 가져옵니다."
+ *     tags: [Pets]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: petId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: "성공"
+ *       404:
+ *         description: "찾을 수 없음"
+ */
+router.get("/api/pets/:petId", authenticateToken, petController.getPetById);
+
+/**
+ * @swagger
  * /api/pets/ranking:
  *   get:
  *     summary: "펫 랭킹 조회"

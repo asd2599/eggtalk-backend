@@ -109,8 +109,27 @@ const getRanking = async (req, res) => {
   }
 };
 
+// 특정 펫 정보 조회 (ID 기반)
+const getPetById = async (req, res) => {
+  try {
+    const { petId } = req.params;
+    const query = "SELECT * FROM pets WHERE id = $1";
+    const result = await pool.query(query, [petId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: "펫을 찾을 수 없습니다." });
+    }
+
+    return res.status(200).json({ pet: result.rows[0], message: "펫 조회 성공" });
+  } catch (error) {
+    console.error("getPetById error:", error);
+    return res.status(500).json({ message: "서버 오류가 발생했습니다." });
+  }
+};
+
 module.exports = {
   getMyPet,
+  getPetById,
   createPet,
   getRanking,
   clamp,
