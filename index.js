@@ -4,12 +4,12 @@ require("dotenv").config();
 const http = require("http");
 const { Server } = require("socket.io");
 
-// 서비스 임포트
 // 소켓 핸들러 임포트
 const datingHandler = require("./sockets/datingHandler");
 const socialHandler = require("./sockets/socialHandler");
 const childHandler = require("./sockets/childHandler");
 const gameHandler = require("./sockets/gameHandler");
+const mafiaHandler = require("./sockets/mafiaHandler");
 
 // 에러 핸들링
 process.on("uncaughtException", (err) =>
@@ -118,6 +118,7 @@ io.on("connection", (socket) => {
   datingHandler(io, socket);
   childHandler(io, socket, state);
   gameHandler(io, socket, state);
+  mafiaHandler(io, socket, state);
 
   // [Disconnect & Cleanup]
   socket.on("disconnect", async () => {
@@ -196,9 +197,7 @@ app.use(require("./routes/petRoutes"));
 app.use("/api", require("./routes/roomRoutes"));
 app.use("/api/friends", require("./routes/friendRoutes"));
 app.use("/api/messages", require("./routes/messageRoutes"));
-app.use("/api", require("./routes/subwayRoutes"));
-app.use("/api", require("./routes/busRoutes"));
-app.use("/api", require("./routes/tmapRoutes"));
+app.use("/api", require("./routes/mafiaRoutes"));
 
 // 스케줄러
 setInterval(async () => {

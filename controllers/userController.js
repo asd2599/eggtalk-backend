@@ -69,7 +69,7 @@ exports.login = async (req, res) => {
     const token = jwt.sign(
       { userId: user.rows[0].id, email: user.rows[0].email },
       process.env.JWT_SECRET,
-      { expiresIn: "1h" },
+      { expiresIn: "24h" }, // 테스트 편의를 위해 24시간으로 연장
     );
 
     res.status(200).json({
