@@ -26,8 +26,8 @@ const corsOptions = {
   origin: [
     "https://gamestack.store",
     "https://www.gamestack.store",
-    "https://keepinsight.site",
-    "https://www.keepinsight.site",
+    "https://eggtalk-backend-production.up.railway.app",
+    "https://www.eggtalk-backend-production.up.railway.app",
     "http://localhost:3000",
     "http://localhost:5173",
     "http://localhost:5174",
