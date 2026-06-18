@@ -11,11 +11,12 @@ exports.getMafiaRooms = async (req, res) => {
     `);
 
     const query = `
-      SELECT r.*, p.name as host_name, 
-      (SELECT COUNT(*) FROM mafia_participants WHERE room_id = r.id) as current_players
+      SELECT r.*, p.name as host_name, COUNT(mp.id) as current_players
       FROM mafia_rooms r
       LEFT JOIN pets p ON r.host_id = p.id
+      LEFT JOIN mafia_participants mp ON mp.room_id = r.id
       WHERE r.status = 'waiting'
+      GROUP BY r.id, p.name
       ORDER BY r.created_at DESC
     `;
     const result = await pool.query(query);
