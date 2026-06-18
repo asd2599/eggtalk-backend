@@ -1,0 +1,21 @@
+app = "eggtalk-backend"
+primary_region = "nrt"
+
+[build]
+
+[env]
+  PORT = "8080"
+  NODE_ENV = "production"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  # WebSocket(socket.io) 연결 유지를 위해 단일 머신으로 고정
+  processes = ["app"]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
