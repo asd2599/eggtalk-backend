@@ -206,17 +206,9 @@ ${dialogue}`,
   };
 };
 
-/* ─────────────────────────────────────────────────
-   하위 호환용 더미 함수 (index.js의 findScenarioById 참조 대비)
-───────────────────────────────────────────────── */
-const findScenarioById = (id) => null; // 더 이상 고정 목록 없음 → null 반환
-const getRandomScenario = () => null; // 사용 안 함
-
 module.exports = {
   generateRolePlay,
   scoreChat,
   generatePetReply,
   evaluateFinalRewards,
-  findScenarioById,
-  getRandomScenario,
 };
