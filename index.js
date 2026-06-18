@@ -3,6 +3,7 @@ const cors = require("cors");
 require("dotenv").config();
 const http = require("http");
 const { Server } = require("socket.io");
+const { pool } = require("./database/database");
 
 // 소켓 핸들러 임포트
 const datingHandler = require("./sockets/datingHandler");
@@ -201,7 +202,6 @@ app.use("/api", require("./routes/mafiaRoutes"));
 // 스케줄러
 setInterval(async () => {
   try {
-    const { pool } = require("./database/database");
     await pool.query(
       "UPDATE pets SET hunger = GREATEST(0, hunger - 1) WHERE hunger > 0",
     );

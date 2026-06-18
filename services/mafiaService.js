@@ -21,7 +21,7 @@ const generateMafiaPetOpinion = async ({
 }) => {
   const alivePlayers = players
     .filter((p) => !p.isDead)
-    .map((p) => p.name)
+    .map((p) => p.anonName)
     .join(", ");
   const chatContext = recentMessages
     .slice(-10)
@@ -63,8 +63,8 @@ ${chatContext}
  */
 const decidePetNightAction = async ({ role, players, petName }) => {
   const targets = players
-    .filter((p) => !p.isDead && p.name !== petName)
-    .map((p) => p.name);
+    .filter((p) => !p.isDead && p.anonName !== petName)
+    .map((p) => p.anonName);
 
   const response = await openai.chat.completions.create({
     model: "gpt-4o-mini",
