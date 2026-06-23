@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS pets (
     face VARCHAR(50) DEFAULT 'neutral',
     shape VARCHAR(50) DEFAULT 'circle',
     hand VARCHAR(50) DEFAULT 'open',
+    is_hatched BOOLEAN DEFAULT FALSE,            -- 자식 펫 부화 여부
     spouse_id  INTEGER REFERENCES pets(id) ON DELETE SET NULL,
     child_id   INTEGER REFERENCES pets(id) ON DELETE SET NULL,
     parent1_id INTEGER REFERENCES pets(id) ON DELETE SET NULL,

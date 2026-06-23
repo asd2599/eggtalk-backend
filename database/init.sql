@@ -33,6 +33,7 @@ CREATE TABLE pets (
     directness INTEGER DEFAULT 0,
     curiosity INTEGER DEFAULT 0,
     tendency VARCHAR(50) DEFAULT 'neutral',
+    is_hatched BOOLEAN DEFAULT FALSE,
     last_chat_time TIMESTAMP,
     today_chat_count INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
