@@ -30,28 +30,8 @@ const { authenticateToken } = require("../middlewares/authMiddleware");
 // 펫 정보 조회
 router.get("/api/pets/my", authenticateToken, petController.getMyPet);
 
-/**
- * @swagger
- * /api/pets/{petId}:
- *   get:
- *     summary: "특정 펫 정보 조회"
- *     description: "지정된 ID의 펫 정보를 가져옵니다."
- *     tags: [Pets]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: petId
- *         required: true
- *         schema:
- *           type: integer
- *     responses:
- *       200:
- *         description: "성공"
- *       404:
- *         description: "찾을 수 없음"
- */
-router.get("/api/pets/:petId", authenticateToken, petController.getPetById);
+// NOTE: GET "/api/pets/:petId" 는 "/api/pets/child", "/api/pets/ranking" 등
+// 고정 경로를 가로채지 않도록 파일 맨 아래(다른 GET 라우트들 뒤)에 등록합니다.
 
 /**
  * @swagger
@@ -436,5 +416,29 @@ router.delete(
   authenticateToken,
   petController.abandonPet,
 );
+
+/**
+ * @swagger
+ * /api/pets/{petId}:
+ *   get:
+ *     summary: "특정 펫 정보 조회"
+ *     description: "지정된 ID의 펫 정보를 가져옵니다."
+ *     tags: [Pets]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: petId
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: "성공"
+ *       404:
+ *         description: "찾을 수 없음"
+ */
+// 와일드카드 경로는 반드시 고정 경로(child, ranking 등) 뒤에 등록해야 함
+router.get("/api/pets/:petId", authenticateToken, petController.getPetById);
 
 module.exports = router;
